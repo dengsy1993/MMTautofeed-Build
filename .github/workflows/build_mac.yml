@@ -5,7 +5,6 @@ on:
     branches: [ "main" ]
   workflow_dispatch: 
 
-# 加入这行环境变量，直接静音你看到的那个 Node.js 20 警告
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true 
 
@@ -29,12 +28,11 @@ jobs:
 
       - name: 执行 PyInstaller 打包
         run: |
-          # 【修复点】将应用名称改为纯英文 MMTAUTO，避免 Mac 底层路径乱码报错
-          pyinstaller --noconfirm --onefile --windowed --name "MMTAUTO" mmtauto_gui.py
+          # 就在这里！已经改成了你实际上传的 mmtauto_gui-Mac-V1.0.py
+          pyinstaller --noconfirm --onefile --windowed --name "MMTAUTO" mmtauto_gui-Mac-V1.0.py
 
       - name: 检查打包结果 (防丢失)
         run: |
-          # 这一步是为了如果再失败，咱们能看到底层到底生成了什么文件
           ls -la dist/ || echo "dist 文件夹没有生成！"
 
       - name: 压缩成 ZIP
