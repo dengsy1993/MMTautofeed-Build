@@ -1,2 +1,2 @@
-# MMTAUTO-Mac-Build-test
+# MMTAUTO-Mac-Build
 将python文件打包成.app，供Mac系统使用（练习）
