@@ -24,12 +24,13 @@ jobs:
       - name: 安装依赖库
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller PyQt6 requests torf qbittorrentapi
+          # 【修复点】改成了带有横杠的正确包名 qbittorrent-api
+          pip install pyinstaller PyQt6 requests torf qbittorrent-api
 
       - name: 执行 PyInstaller 打包
         run: |
-          # 就在这里！已经改成了你实际上传的 mmtauto_gui-Mac-V1.0.py
-          pyinstaller --noconfirm --onefile --windowed --name "MMTAUTO" mmtauto_gui-Mac-V1.0.py
+          # 确保这里是你最终上传的那个文件名
+          pyinstaller --noconfirm --onefile --windowed --name "MMTAUTO" mmtauto_gui.py
 
       - name: 检查打包结果 (防丢失)
         run: |
