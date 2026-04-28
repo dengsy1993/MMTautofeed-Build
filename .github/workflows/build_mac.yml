@@ -1,44 +1,47 @@
 name: Mac云端打包流水线
 
-# 触发条件：当你手动点击或者上传新代码时触发
 on:
   push:
     branches: [ "main" ]
   workflow_dispatch: 
 
+# 加入这行环境变量，直接静音你看到的那个 Node.js 20 警告
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true 
+
 jobs:
   build:
-    runs-on: macos-latest  # 向 GitHub 申请一台最新的 Mac 虚拟机
+    runs-on: macos-latest
 
     steps:
-      # 1. 把你刚传上来的代码拉到这台 Mac 里
       - name: 获取代码
         uses: actions/checkout@v4
 
-      # 2. 给这台 Mac 安装 Python 环境 (版本 3.10)
       - name: 安装 Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      # 3. 安装你代码里用到的各种库
       - name: 安装依赖库
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller PyQt6 requests torf qbittorrentapi
 
-      # 4. 重点：执行打包命令！
       - name: 执行 PyInstaller 打包
         run: |
-          pyinstaller --noconfirm --onefile --windowed --name "MMTAUTO-PT工具" mmtauto_gui.py
+          # 【修复点】将应用名称改为纯英文 MMTAUTO，避免 Mac 底层路径乱码报错
+          pyinstaller --noconfirm --onefile --windowed --name "MMTAUTO" mmtauto_gui.py
 
-      # 5. Mac 的应用是个文件夹，必须压缩成 zip 我们才能下载
+      - name: 检查打包结果 (防丢失)
+        run: |
+          # 这一步是为了如果再失败，咱们能看到底层到底生成了什么文件
+          ls -la dist/ || echo "dist 文件夹没有生成！"
+
       - name: 压缩成 ZIP
         run: |
           cd dist
-          zip -r MMTAUTO_Mac.zip "MMTAUTO-PT工具.app"
+          zip -r MMTAUTO_Mac.zip MMTAUTO.app
 
-      # 6. 把压缩包放到下载区让你拿走
       - name: 上传最终成品
         uses: actions/upload-artifact@v4
         with:
