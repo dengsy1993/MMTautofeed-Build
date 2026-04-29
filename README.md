@@ -2,7 +2,8 @@
 将`MMTautofeed.py`打包成`.app`和`.exe`，供MMT发布组发种使用
 
 ## 技术栈
-* Gemini
+* Gemini pro
+* 自然语言
 
 ## 使用步骤
 
