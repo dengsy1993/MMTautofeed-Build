@@ -155,16 +155,34 @@ class BatchWorkerThread(QThread):
                 set_p(55 if self.mode == 'auto' else 10)
                 img_url = ""
                 
+                # 【终极优化】：引入浏览器伪装头、防呆过滤 Token、以及 5MB 体积预警！
                 if task['thumb_path'] and os.path.exists(task['thumb_path']):
                     self.cell_update_signal.emit(row, 9, "⬆️ 上传图片...", "#ff9500"); self.emit_log(f"🖼️ [图床通信] 开始上传展示封面...", "INFO")
                     try:
                         mime_type = mimetypes.guess_type(task['thumb_path'])[0] or 'image/jpeg'
+                        
+                        file_size_mb = os.path.getsize(task['thumb_path']) / (1024 * 1024)
+                        if file_size_mb > 5.0:
+                            self.emit_log(f"⚠️ 警告: 封面体积({file_size_mb:.2f}MB)超过了图床 5MB 的限制！极大可能会被拦截！", "WARNING")
+                            
                         for retry in range(3):
                             try:
                                 with open(task['thumb_path'], 'rb') as f:
-                                    files = {"file": (os.path.basename(task['thumb_path']), f, mime_type)}; headers = {"Accept": "application/json"}
-                                    if self.config['image_token']: headers["Authorization"] = f"Bearer {self.config['image_token']}"
+                                    files = {"file": (os.path.basename(task['thumb_path']), f, mime_type)}
+                                    # 伪装成浏览器防 CF 盾拦截！
+                                    headers = {
+                                        "Accept": "application/json",
+                                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                                    }
+                                    raw_token = self.config.get('image_token', '').strip()
+                                    if raw_token:
+                                        if raw_token.lower().startswith('bearer '): raw_token = raw_token[7:].strip()
+                                        headers["Authorization"] = f"Bearer {raw_token}"
+                                    else:
+                                        self.emit_log("⚠️ 警告: 未配置图床 Token！这可能会导致图片上传被拒绝(401)，请前往偏好设置获取！", "WARNING")
+                                        
                                     img_res = requests.post(self.config['image_upload_api'], headers=headers, files=files, timeout=120)
+                                    
                                 if img_res.status_code in [200, 201]:
                                     try:
                                         img_data = img_res.json()
@@ -172,7 +190,7 @@ class BatchWorkerThread(QThread):
                                         self.emit_log(f"✅ 图床上传成功，获取直链: {img_url}", "SUCCESS")
                                     except: pass
                                 else: 
-                                    self.emit_log(f"❌ 图床拒绝上传! HTTP状态码: {img_res.status_code} | 服务器返回拦截信息: {img_res.text[:150]}", "ERROR")
+                                    self.emit_log(f"❌ 图床拒绝上传! HTTP状态码: {img_res.status_code} | 拦截原因: {img_res.text[:150]}", "ERROR")
                                 break 
                             except requests.exceptions.Timeout:
                                 self.emit_log(f"⚠️ 图床超时，发起重试 {retry+1}/3", "WARNING")
@@ -230,7 +248,7 @@ class BatchWorkerThread(QThread):
                     self.emit_log(f"🌐 [网络推送] 正在向 PT 站点发送表单数据...", "INFO")
                     with open(torrent_path, "rb") as file_stream:
                         files = {'file': (os.path.basename(torrent_path), file_stream, 'application/x-bittorrent')}
-                        headers = {"User-Agent": "MMTautofeed-Client/v1.0.1", "Cookie": self.config['cookie']}
+                        headers = {"User-Agent": "MMTautofeed-Client/v1.0.2", "Cookie": self.config['cookie']}
                         resp = requests.post(upload_submit_url, headers=headers, data=post_data, files=files, timeout=25, allow_redirects=True)
                         
                     match = re.search(r'id(?:=|%3D)(\d+)', resp.url)
@@ -416,7 +434,7 @@ class TagsSelectDialog(QDialog):
 class PTUploaderFullGUI(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MMTautofeed批量发种工具 (v1.0.1)")
+        self.setWindowTitle("MMTautofeed批量发种工具 (v1.0.2)")
         self.resize(1300, 880) 
         self.init_directories()
         
