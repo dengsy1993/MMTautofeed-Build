@@ -33,5 +33,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: MMTautofeed_Windows_Package
-          # GitHub 会自动将该 exe 压缩为 zip 供你下载
           path: dist/MMTautofeed.exe
