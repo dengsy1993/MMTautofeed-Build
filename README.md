@@ -1,2 +1,2 @@
-# MMTAUTO-Mac-Build
-将python文件打包成.app，供Mac系统使用（练习）
+# MMTautofeed-Build
+将MMTautofeed.py打包成.app和.exe，供MMT发布组发种使用
