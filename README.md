@@ -12,4 +12,4 @@
 
 * 回填至`.github`里面的`yaml`文件中
 
-**通过`actions`分别打包**
+* 通过`actions`分别打包
