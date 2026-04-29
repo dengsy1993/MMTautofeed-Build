@@ -1,4 +1,4 @@
-name: Mac 云端打包流水线
+name: Windows 云端打包流水线
 
 on:
   workflow_dispatch: 
@@ -8,7 +8,7 @@ env:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: windows-latest
 
     steps:
       - name: 获取代码
@@ -26,15 +26,12 @@ jobs:
 
       - name: 执行 PyInstaller 打包
         run: |
+          # Windows 下打出的直接是单个 .exe 文件
           pyinstaller --noconfirm --onefile --windowed --icon="app_icon.ico" --name "MMTautofeed" MMTautofeed.py
-
-      - name: 压缩成 ZIP (Mac 必需)
-        run: |
-          cd dist
-          zip -r MMTautofeed_Mac.zip MMTautofeed.app
 
       - name: 上传最终成品
         uses: actions/upload-artifact@v4
         with:
-          name: MMTautofeed_MacOS_Package
-          path: dist/MMTautofeed_Mac.zip
+          name: MMTautofeed_Windows_Package
+          # GitHub 会自动将该 exe 压缩为 zip 供你下载
+          path: dist/MMTautofeed.exe
