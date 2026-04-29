@@ -1,8 +1,6 @@
-name: Mac云端打包流水线
+name: Mac 云端打包流水线
 
 on:
-  push:
-    branches: [ "main" ]
   workflow_dispatch: 
 
 env:
@@ -24,25 +22,19 @@ jobs:
       - name: 安装依赖库
         run: |
           python -m pip install --upgrade pip
-          # 【修复点】改成了带有横杠的正确包名 qbittorrent-api
           pip install pyinstaller PyQt6 requests torf qbittorrent-api
 
       - name: 执行 PyInstaller 打包
         run: |
-          # 确保这里是你最终上传的那个文件名
-          pyinstaller --noconfirm --onefile --windowed --name "MMTAUTO" mmtauto_gui.py
+          pyinstaller --noconfirm --onefile --windowed --icon="app_icon.icns" --name "MMTautofeed" MMTautofeed.py
 
-      - name: 检查打包结果 (防丢失)
-        run: |
-          ls -la dist/ || echo "dist 文件夹没有生成！"
-
-      - name: 压缩成 ZIP
+      - name: 压缩成 ZIP (Mac 必需)
         run: |
           cd dist
-          zip -r MMTAUTO_Mac.zip MMTAUTO.app
+          zip -r MMTautofeed_Mac.zip MMTautofeed.app
 
       - name: 上传最终成品
         uses: actions/upload-artifact@v4
         with:
-          name: Mac版发种工具
-          path: dist/MMTAUTO_Mac.zip
+          name: MMTautofeed_MacOS_Package
+          path: dist/MMTautofeed_Mac.zip
