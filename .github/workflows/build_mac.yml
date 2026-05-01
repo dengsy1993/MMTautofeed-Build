@@ -1,7 +1,7 @@
 name: Mac 云端打包流水线
 
 on:
-  workflow_dispatch: # 手动触发模式
+  workflow_dispatch: 
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true 
@@ -26,9 +26,23 @@ jobs:
 
       - name: 执行 PyInstaller 打包
         run: |
-          pyinstaller --noconfirm --onefile --windowed --icon="app_icon.icns" --hidden-import=torf --hidden-import=qbittorrentapi --name "MMTautofeed" MMTautofeed.py
+          # 禁用 argv_emulation 是解决双图标的第一步
+          pyinstaller --noconfirm --onefile --windowed \
+            --icon="app_icon.icns" \
+            --hidden-import=torf --hidden-import=qbittorrentapi \
+            --name "MMTautofeed" \
+            MMTautofeed.py
 
-      - name: 压缩成 ZIP (Mac 必需)
+      - name: 深度修复双图标 (注入 LSUIElement)
+        if: ${{ true }}
+        run: |
+          # 使用 macOS 自带的 PlistBuddy 强制修改 Info.plist
+          # 这会隐藏启动器图标，只保留 PyQt6 窗口图标
+          PLIST="dist/MMTautofeed.app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :LSUIElement true" "$PLIST"
+          echo "✅ Info.plist 已成功注入 LSUIElement 参数"
+
+      - name: 压缩成 ZIP
         run: |
           cd dist
           zip -r MMTautofeed_Mac.zip MMTautofeed.app
