@@ -1,18 +1,16 @@
 import sys, os, json, datetime, requests, zipfile, threading, shutil, subprocess, uuid, mimetypes, re
-if sys.platform == 'darwin':
-    try:
-        from AppKit import NSBundle
-        bundle = NSBundle.mainBundle()
-        if bundle:
-            info = bundle.localizedInfoDictionary() or bundle.infoDictionary()
-            if info and 'CFBundleName' not in info: info['CFBundleName'] = 'MMTautofeed'
-    except ImportError: pass
-elif sys.platform == 'win32':
+
+# =====================================================================
+# 🌟 针对 Windows 任务栏图标的底层注册 (确保不显示白板或蛇头)
+# =====================================================================
+if sys.platform == 'win32':
     try:
         import ctypes
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("mmt.autofeed.app.1_0")
-    except Exception: pass
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QGroupBox, QLabel, QComboBox, QPushButton, QTableWidget, QTableWidgetItem, QTextEdit, QLineEdit, QCheckBox, QScrollArea, QGridLayout, QFormLayout, QSpinBox, QHeaderView, QRadioButton, QButtonGroup, QMessageBox, QFileDialog, QDialog, QProgressBar, QListWidget, QAbstractItemView, QTreeView, QFrame)
+    except Exception:
+        pass
+
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QGroupBox, QLabel, QComboBox, QPushButton, QTableWidget, QTableWidgetItem, QTextEdit, QLineEdit, QCheckBox, QScrollArea, QGridLayout, QFormLayout, QSpinBox, QHeaderView, QRadioButton, QButtonGroup, QMessageBox, QFileDialog, QDialog, QSizePolicy, QProgressBar, QListWidget, QAbstractItemView, QListView, QTreeView, QFrame)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QEvent, QTimer
 from PyQt6.QtGui import QStandardItemModel, QStandardItem, QColor, QIcon
 
@@ -525,7 +523,6 @@ class PTUploaderFullGUI(QMainWindow):
                             if any(lf.endswith(ext) for ext in exts) or any(kw in lf for kw in kws): os.remove(os.path.join(root, file)); total_cleaned += 1; self.log_msg(f"🛡 触发防拦截规则，已删除文件: {file}", "WARNING"); QApplication.processEvents()
                 except Exception as e: self.log_msg(f"清理文件时报错: {e}", "ERROR")
             
-            # 【全新修复】：图片视频独立计数并拼接
             img_c = len([f for f in os.listdir(f_path) if f.lower().endswith(('.jpg', '.jpeg', '.png'))])
             vid_c = len([f for f in os.listdir(f_path) if f.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.ts'))])
             amount_parts = []
@@ -720,7 +717,11 @@ class PTUploaderFullGUI(QMainWindow):
         sa.setWidget(mw); lyt = QVBoxLayout(self.tab_settings); lyt.setContentsMargins(0,0,0,0); lyt.addWidget(sa)
 
 if __name__ == "__main__":
+    # 【Mac双图标终极解法】：通过 PyQt 原生属性强制命名进程，与 .app 包名对齐！
     app = QApplication(sys.argv)
+    app.setApplicationName("MMTautofeed")
+    app.setApplicationDisplayName("MMTautofeed")
+    app.setDesktopFileName("MMTautofeed")
     window = PTUploaderFullGUI()
     window.show()
     sys.exit(app.exec())
