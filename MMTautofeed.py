@@ -150,7 +150,8 @@ class CollageView(QGraphicsView):
         img = QImage(1200, 1680, QImage.Format.Format_ARGB32); img.fill(QColor("#141414"))
         painter = QPainter(img); painter.setRenderHint(QPainter.RenderHint.Antialiasing); painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         self.scene.render(painter, target=QRectF(0,0,1200,1680), source=QRectF(0,0,1200,1680))
-        painter.end(); img.save(filepath, "JPG", 100)
+        painter.end()
+        img.save(filepath, "JPG", 80) 
 
 class CheckableComboBox(QComboBox):
     def __init__(self, parent=None):
@@ -208,12 +209,19 @@ class BatchWorkerThread(QThread):
                 try:
                     target_path = folder_path
                     if use_zip:
-                        set_p(15); zip_name = f"{std_name}.zip"; zip_path = os.path.join(seeding_dir, zip_name); self.emit_log(f"📦 [文件打包] 制作 ZIP: {zip_name} ...", "INFO")
-                        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                            for root, _, files in os.walk(folder_path):
-                                for f in files:
-                                    if not self.is_running: raise InterruptedError()
-                                    zipf.write(os.path.join(root, f), os.path.relpath(os.path.join(root, f), os.path.join(folder_path, '..')))
+                        set_p(15); zip_name = f"{std_name}.zip"; zip_path = os.path.join(seeding_dir, zip_name); self.emit_log(f"📦 [文件打包] 制作极速压缩 ZIP: {zip_name} ...", "INFO")
+                        try:
+                            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=1) as zipf:
+                                for root, _, files in os.walk(folder_path):
+                                    for f in files:
+                                        if not self.is_running: raise InterruptedError()
+                                        zipf.write(os.path.join(root, f), os.path.relpath(os.path.join(root, f), os.path.join(folder_path, '..')))
+                        except TypeError:
+                            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                                for root, _, files in os.walk(folder_path):
+                                    for f in files:
+                                        if not self.is_running: raise InterruptedError()
+                                        zipf.write(os.path.join(root, f), os.path.relpath(os.path.join(root, f), os.path.join(folder_path, '..')))
                         target_path = zip_path; self.emit_log(f"✅ ZIP 打包完毕！", "SUCCESS")
                     set_p(35); self.emit_log(f"⚙️ [种子生成] 计算哈希...", "INFO")
                     t = torf.Torrent(path=target_path, trackers=[announce_url], private=True); t.generate()
@@ -545,10 +553,10 @@ class PTUploaderFullGUI(PTUploaderBase):
         group_top = QGroupBox("第一步：选择发布预设与基础设定"); h_top = QHBoxLayout()
         self.preset_combo = QComboBox(); self.preset_combo.currentIndexChanged.connect(self.preset_changed); self.preset_combo.setMinimumWidth(200); h_top.addWidget(QLabel("发布预设:")); h_top.addWidget(self.preset_combo)
         btn_m = QPushButton("⚙ 管理预设"); btn_m.clicked.connect(self.open_manage_presets); h_top.addWidget(btn_m)
-        btn_r = QPushButton("刷新菜单"); btn_r.clicked.connect(self.refresh_main_preset_combo); h_top.addWidget(btn_r); h_top.addStretch()
+        btn_r = QPushButton("刷新"); btn_r.clicked.connect(self.refresh_main_preset_combo); h_top.addWidget(btn_r); h_top.addStretch()
         self.cb_batch_anon = QCheckBox("匿名上传"); self.cb_batch_anon.setChecked(True); self.cb_batch_zip = QCheckBox("打包为ZIP格式"); self.cb_batch_zip.setChecked(True); self.cb_batch_test = QCheckBox("仅测试(不发送)")
         h_top.addWidget(self.cb_batch_anon); h_top.addWidget(self.cb_batch_zip); h_top.addWidget(self.cb_batch_test)
-        v_top = QVBoxLayout(); v_top.addLayout(h_top); self.preset_info_label = QTextEdit(); self.preset_info_label.setFixedHeight(80); self.preset_info_label.setReadOnly(True); v_top.addWidget(self.preset_info_label); group_top.setLayout(v_top); layout.addWidget(group_top, 0); self.refresh_main_preset_combo()
+        v_top = QVBoxLayout(); v_top.addLayout(h_top); self.preset_info_label = QTextEdit(); self.preset_info_label.setFixedHeight(80); self.preset_info_label.setReadOnly(True); v_top.addWidget(self.preset_info_label); group_top.setLayout(v_top); layout.addWidget(group_top, 0)
 
         group_mid = QGroupBox("第二步：装载文件夹与提取信息"); v_mid = QVBoxLayout()
         lbl_hint_step2 = QLabel("💡 操作指南：点击【添加文件夹】批量导入资源；选中列表中的某一行，点击【➖ 移除选中行】可删除该项。\n如果智能提取的标题或参数有误，你可以直接在表格内双击手动修改！"); lbl_hint_step2.setStyleSheet("color: #007aff; font-size: 11px;"); v_mid.addWidget(lbl_hint_step2)
@@ -591,6 +599,9 @@ class PTUploaderFullGUI(PTUploaderBase):
         self.batch_log = QTextEdit(); self.batch_log.setObjectName("BatchLogView"); self.batch_log.setFixedHeight(120); self.batch_log.setReadOnly(True)
         btn_clr_batch_log = QPushButton("🗑 清空回显"); btn_clr_batch_log.setStyleSheet("color:#ff3b30; background:transparent; border:none;"); btn_clr_batch_log.setCursor(Qt.CursorShape.PointingHandCursor); btn_clr_batch_log.clicked.connect(self.batch_log.clear)
         h_log_header.addWidget(btn_clr_batch_log); v_bot.addLayout(h_log_header); v_bot.addWidget(self.batch_log); group_bot.setLayout(v_bot); layout.addWidget(group_bot, 0)
+        
+        # 将表格更新同步渲染操作推迟到所有 UI 构建完毕之后执行，杜绝闪退
+        self.refresh_main_preset_combo()
 
     def setup_cover_tab(self):
         layout = QVBoxLayout(self.tab_cover)
@@ -610,7 +621,7 @@ class PTUploaderFullGUI(PTUploaderBase):
         
         g_prev = QGroupBox("3. 封面拖拽交互工作台 (原生高精度微积分算法，完美复刻美图秀秀)"); v_prev = QVBoxLayout()
         
-        lbl_prev_hint = QLabel("💡 画布指南：深灰色区域为工作台画布。防乱飞操作说明：\n1. 【双击图片】可快速替换该位置的图片（自动打开该图所在文件夹）。\n2. 【先单击选中一张照片，然后按住左键拖拽】可直接丝滑调整位置。\n3. 【先单击选中一张照片，然后滚动鼠标滚轮】该照片会死死钉在中心原点进行防抖缩放，绝不乱跑！\n4. 在灰色画布区（不要点图片）【按住 Ctrl + 滚动滚轮】可整体无极缩放整个工作台。"); lbl_prev_hint.setStyleSheet("color: #ff9500; font-size: 11px; font-weight: bold;"); v_prev.addWidget(lbl_prev_hint)
+        lbl_prev_hint = QLabel("💡 画布指南：深灰色区域为工作台画布。操作说明：\n1. 【双击图片】可快速替换该位置的图片（自动打开该图所在文件夹）。\n2. 【先单击选中一张照片，然后按住左键拖拽】可直接丝滑调整位置。\n3. 在灰色画布区（不要点图片）【按住 Ctrl + 滚动滚轮】可整体无极缩放整个工作台。"); lbl_prev_hint.setStyleSheet("color: #ff9500; font-size: 11px; font-weight: bold;"); v_prev.addWidget(lbl_prev_hint)
         
         self.lbl_preview = CollageView()
         self.lbl_preview.image_double_clicked.connect(self.cover_change_single_image_from_event)
@@ -701,7 +712,19 @@ class PTUploaderFullGUI(PTUploaderBase):
         for p in self.presets_data: self.preset_combo.addItem(p["name"])
         idx = self.preset_combo.findText(cur)
         if idx >= 0: self.preset_combo.setCurrentIndex(idx)
+        else: self.preset_combo.setCurrentIndex(0)
         self.preset_combo.blockSignals(False)
+        
+        for row in range(self.table.rowCount()):
+            row_combo = self.table.cellWidget(row, 2)
+            if row_combo:
+                row_cur = row_combo.currentText(); row_combo.blockSignals(True); row_combo.clear(); row_combo.addItem("无预设")
+                for p in self.presets_data: row_combo.addItem(p["name"])
+                row_idx = row_combo.findText(row_cur)
+                if row_idx >= 0: row_combo.setCurrentIndex(row_idx)
+                row_combo.blockSignals(False)
+                
+        self.preset_changed()
 
     def preset_changed(self):
         p_name = self.preset_combo.currentText()
@@ -711,6 +734,20 @@ class PTUploaderFullGUI(PTUploaderBase):
                 info_text = (f"📸 摄影师：{p.get('photographer', '未配置')}   |   👤 主角/模特：{p.get('model', '未配置')}\n🎯 默认分类：{p.get('category', '默认')}   |   🏷️ 附带标签：{tags_str}\n📝 简介内容：{p.get('intro', '无')}")
                 self.preset_info_label.setText(info_text); break
         if p_name == "请选择预设模板...": self.preset_info_label.setText("💡 请选择一个全局默认预设，作为后续新增资源的初始配置。")
+
+        for row in range(self.table.rowCount()):
+            is_locked = False
+            w_lock = self.table.cellWidget(row, 3)
+            if w_lock:
+                chk = w_lock.findChild(QCheckBox)
+                if chk and chk.isChecked(): is_locked = True
+            
+            row_combo = self.table.cellWidget(row, 2)
+            if not is_locked and p_name != "请选择预设模板..." and row_combo:
+                if row_combo.currentText() != p_name: row_combo.setCurrentText(p_name)
+                else: self.on_row_preset_changed(row)
+            else:
+                self.on_row_preset_changed(row)
 
     def batch_add_folder(self):
         dialog = QFileDialog(self, "选择存放作品的多个文件夹 (Win按Ctrl / Mac按Command 多选)", self.last_dir); dialog.setFileMode(QFileDialog.FileMode.Directory); dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True); dialog.setOption(QFileDialog.Option.ShowDirsOnly, True)
