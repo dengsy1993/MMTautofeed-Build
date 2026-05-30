@@ -49,14 +49,21 @@ class ContainerItem(QGraphicsPathItem):
         super().__init__(parent); self.setPath(path); self.setPen(QPen(Qt.PenStyle.NoPen)); self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemClipsChildrenToShape, True)
 
 class DraggableImage(QGraphicsPixmapItem):
-    def __init__(self, pixmap, parent=None):
+    def __init__(self, pixmap, parent_view, idx, path, parent=None):
         super().__init__(pixmap, parent)
+        self.parent_view = parent_view
+        self.idx = idx
+        self.img_path = path
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
         self.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
-        # 修复2：只在初始化时设置一次几何中心为锚点，防止被 wheelEvent 反复设置导致飞走
         self.setTransformOriginPoint(self.boundingRect().center())
     
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.parent_view.image_double_clicked.emit(self.idx, self.img_path)
+        super().mouseDoubleClickEvent(event)
+
     def wheelEvent(self, event):
         if not self.isSelected():
             event.ignore(); return
@@ -69,6 +76,8 @@ class DraggableImage(QGraphicsPixmapItem):
         event.accept()
 
 class CollageView(QGraphicsView):
+    image_double_clicked = pyqtSignal(int, str)
+    
     def __init__(self):
         super().__init__()
         self.scene = QGraphicsScene(self); self.setScene(self.scene); self.scene.setSceneRect(0, 0, 1200, 1680)
@@ -105,12 +114,12 @@ class CollageView(QGraphicsView):
             if path and os.path.exists(path):
                 img = QImage(path)
                 if img.isNull(): continue
-                pixmap = QPixmap.fromImage(img); img_item = DraggableImage(pixmap, parent=self.containers[i])
+                pixmap = QPixmap.fromImage(img)
+                img_item = DraggableImage(pixmap, self, i, path, parent=self.containers[i])
                 bw, bh = self.bboxes[i][2], self.bboxes[i][3]
                 img_ratio = pixmap.width() / pixmap.height(); box_ratio = bw / bh
                 scale = bh / pixmap.height() if img_ratio > box_ratio else bw / pixmap.width()
                 img_item.setScale(scale); cx, cy = self.centers[i]
-                # 修复2衍生：剥离缩放因数带来的排版漂移，纯粹用原始尺寸算偏移
                 img_item.setPos(cx - pixmap.width()/2, cy - pixmap.height()/2)
                 img_item.setZValue(0); self.image_items[i] = img_item
         self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
@@ -119,7 +128,8 @@ class CollageView(QGraphicsView):
         if self.image_items[idx] and self.image_items[idx].scene(): self.scene.removeItem(self.image_items[idx])
         self.current_paths[idx] = path; img = QImage(path)
         if img.isNull(): return
-        pixmap = QPixmap.fromImage(img); img_item = DraggableImage(pixmap, parent=self.containers[idx])
+        pixmap = QPixmap.fromImage(img)
+        img_item = DraggableImage(pixmap, self, idx, path, parent=self.containers[idx])
         bw, bh = self.bboxes[idx][2], self.bboxes[idx][3]
         img_ratio = pixmap.width() / pixmap.height(); box_ratio = bw / bh
         scale = bh / pixmap.height() if img_ratio > box_ratio else bw / pixmap.width()
@@ -141,6 +151,7 @@ class CollageView(QGraphicsView):
         painter = QPainter(img); painter.setRenderHint(QPainter.RenderHint.Antialiasing); painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         self.scene.render(painter, target=QRectF(0,0,1200,1680), source=QRectF(0,0,1200,1680))
         painter.end(); img.save(filepath, "JPG", 100)
+
 class CheckableComboBox(QComboBox):
     def __init__(self, parent=None):
         super().__init__(parent); self.setEditable(True); self.lineEdit().setReadOnly(True); self.lineEdit().installEventFilter(self); self.setModel(QStandardItemModel(self)); self.view().viewport().installEventFilter(self)
@@ -374,19 +385,10 @@ class ManagePresetsDialog(QDialog):
     def delete_preset(self, row):
         if QMessageBox.question(self, '确认删除', "确定永久删除此条预设？", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes: del self.parent_win.presets_data[row]; self.parent_win.save_presets(); self.refresh_table(); self.parent_win.refresh_main_preset_combo()
 
-class TagsSelectDialog(QDialog):
-    def __init__(self, current_tags, parent=None):
-        super().__init__(parent); self.setWindowTitle("选择发种标签"); self.resize(400, 250); layout = QVBoxLayout(self)
-        lbl = QLabel("💡 提示：系统将在发包时自动在后台附加【官方】与【禁转】标签，此处无需勾选。"); lbl.setStyleSheet("color: #e65100; font-size: 12px; margin-bottom: 10px;"); layout.addWidget(lbl)
-        grid = QGridLayout(); self.cbs = {}
-        for i, t in enumerate(SITE_TAGS): cb = QCheckBox(t); cb.setChecked(t in current_tags); self.cbs[t] = cb; grid.addWidget(cb, i // 4, i % 4)
-        layout.addLayout(grid); layout.addStretch(); btn_ok = QPushButton("确认选择"); btn_ok.setStyleSheet("background-color: #007aff; color: white;"); btn_ok.clicked.connect(self.accept)
-        layout.addWidget(btn_ok, alignment=Qt.AlignmentFlag.AlignRight)
-    def get_selected(self): return [t for t, cb in self.cbs.items() if cb.isChecked()]
 class PTUploaderBase(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MMTautofeed批量发种工具 (v1.03.5 商业级完美终局版)")
+        self.setWindowTitle("MMTautofeed批量发种工具 v1.03.5")
         self.resize(1300, 880) 
         self.current_theme = "light"; self.hint_labels = []; self.presets_data = []; self.clean_keywords = []; self.clean_exts = []; self.preset_font_size = 10; self.base_dir = ""; self.last_dir = ""
 
@@ -395,7 +397,6 @@ class PTUploaderBase(QMainWindow):
             if sys.platform == 'darwin': self.base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(sys.executable))))
             else: self.base_dir = os.path.dirname(sys.executable)
         else: self.base_dir = os.path.dirname(os.path.abspath(__file__))
-        # 修复1：将 last_dir 初始化为当前程序主目录，这样第一次点浏览文件夹时就不会跑偏了
         self.last_dir = self.base_dir
         os.makedirs(os.path.join(self.base_dir, 'logs'), exist_ok=True)
 
@@ -529,6 +530,16 @@ class PTUploaderFullGUI(PTUploaderBase):
         btn_clear = QPushButton("🗑 清空当前面板"); btn_clear.setStyleSheet("background-color: #ff3b30; color: white; border: none;"); btn_clear.clicked.connect(self.log_view.clear)
         h_tool.addWidget(btn_open_dir); h_tool.addWidget(btn_clear); v_log.addLayout(h_tool); v_log.addWidget(self.log_view); group_log.setLayout(v_log); layout.addWidget(group_log)
 
+    def update_table_cell(self, row, col, text, color_hex):
+        item = self.table.item(row, col)
+        if not item:
+            item = QTableWidgetItem(text)
+            self.table.setItem(row, col, item)
+        else:
+            item.setText(text)
+        if color_hex:
+            item.setForeground(QBrush(QColor(color_hex)))
+
     def setup_batch_upload_tab(self):
         layout = QVBoxLayout(self.tab_batch)
         group_top = QGroupBox("第一步：选择发布预设与基础设定"); h_top = QHBoxLayout()
@@ -599,15 +610,11 @@ class PTUploaderFullGUI(PTUploaderBase):
         
         g_prev = QGroupBox("3. 封面拖拽交互工作台 (原生高精度微积分算法，完美复刻美图秀秀)"); v_prev = QVBoxLayout()
         
-        h_actions0 = QHBoxLayout()
-        h_actions0.addWidget(QLabel("快捷单独换图: "))
-        self.btn_change_imgs = []
-        for i in range(4):
-            btn = QPushButton(f"换图 {i+1}"); btn.clicked.connect(lambda checked, idx=i: self.cover_change_single_image(idx)); self.btn_change_imgs.append(btn); h_actions0.addWidget(btn)
-        v_prev.addLayout(h_actions0)
-
-        lbl_prev_hint = QLabel("💡 画布指南：深灰色区域为工作台画布。防乱飞操作说明：\n1. 【先单击选中一张照片，然后按住左键拖拽】可直接丝滑调整位置；\n2. 【先单击选中一张照片，然后滚动鼠标滚轮】该照片会死死钉在中心原点进行防抖缩放，绝不乱跑！\n3. 在灰色画布区（不要点图片）【按住 Ctrl + 滚动滚轮】可整体无极缩放整个工作台。"); lbl_prev_hint.setStyleSheet("color: #ff9500; font-size: 11px; font-weight: bold;"); v_prev.addWidget(lbl_prev_hint)
-        self.lbl_preview = CollageView(); v_prev.addWidget(self.lbl_preview, 1)
+        lbl_prev_hint = QLabel("💡 画布指南：深灰色区域为工作台画布。防乱飞操作说明：\n1. 【双击图片】可快速替换该位置的图片（自动打开该图所在文件夹）。\n2. 【先单击选中一张照片，然后按住左键拖拽】可直接丝滑调整位置。\n3. 【先单击选中一张照片，然后滚动鼠标滚轮】该照片会死死钉在中心原点进行防抖缩放，绝不乱跑！\n4. 在灰色画布区（不要点图片）【按住 Ctrl + 滚动滚轮】可整体无极缩放整个工作台。"); lbl_prev_hint.setStyleSheet("color: #ff9500; font-size: 11px; font-weight: bold;"); v_prev.addWidget(lbl_prev_hint)
+        
+        self.lbl_preview = CollageView()
+        self.lbl_preview.image_double_clicked.connect(self.cover_change_single_image_from_event)
+        v_prev.addWidget(self.lbl_preview, 1)
         
         self.cover_progress = QProgressBar(); self.cover_progress.setValue(0); self.cover_progress.setFixedHeight(12); v_prev.addWidget(self.cover_progress)
         self.cover_log = QTextEdit(); self.cover_log.setReadOnly(True); self.cover_log.setFixedHeight(60); self.cover_log.setStyleSheet("background-color: #1e1e1e; color: #34c759; font-family: Consolas; font-size: 11px;"); v_prev.addWidget(self.cover_log)
@@ -858,12 +865,12 @@ class PTUploaderFullGUI(PTUploaderBase):
         self.lbl_preview.load_images(selected)
         self.log_cover(f"已随机抽取图库并生成拼图: {os.path.basename(folder_path)}")
 
-    def cover_change_single_image(self, idx):
-        if not self.lbl_preview.current_paths: return QMessageBox.warning(self, "提示", "请先在左侧选择文件夹生成预览！")
-        path, _ = QFileDialog.getOpenFileName(self, "选择替换图片", self.last_dir, "Images (*.jpg *.jpeg *.png)")
+    def cover_change_single_image_from_event(self, idx, current_path):
+        folder = os.path.dirname(current_path) if current_path and os.path.exists(current_path) else self.last_dir
+        path, _ = QFileDialog.getOpenFileName(self, "选择替换图片", folder, "Images (*.jpg *.jpeg *.png)")
         if path:
+            self.last_dir = os.path.dirname(path)
             self.lbl_preview.replace_image(idx, path)
-            self.btn_change_imgs[idx].setText(os.path.basename(path)[:8] + "..")
             self.log_cover(f"已成功替换第 {idx+1} 张图片")
 
     def cover_gen_random(self):
