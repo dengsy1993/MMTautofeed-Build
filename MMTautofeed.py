@@ -18,8 +18,9 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QEvent, QTimer, QPointF, QRectF
 from PyQt6.QtGui import QStandardItemModel, QStandardItem, QColor, QIcon, QImage, QPixmap, QPainter, QPainterPath, QPen, QBrush, QPolygonF, QTransform, QPainterPathStroker
 
-STYLE_LIGHT = "QMainWindow, QDialog, QWidget { background-color: #f5f5f7; color: #1d1d1f; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif; font-size: 13px; } QLabel, QCheckBox, QRadioButton { background: transparent; color: #1d1d1f; } QMessageBox { background-color: #ffffff; border-radius: 8px; border: 1px solid #d2d2d7; } QMessageBox QLabel { background-color: transparent; } QLineEdit, QSpinBox, QComboBox { background-color: #ffffff; color: #1d1d1f; border: 1px solid #c7c7cc; border-radius: 6px; padding: 6px 8px; min-height: 24px; } QLineEdit:focus, QSpinBox:focus, QComboBox:focus { border: 1px solid #007aff; } QComboBox::drop-down { border: none; width: 20px; } QComboBox QAbstractItemView, QListView { background-color: #ffffff; color: #1d1d1f; border: 1px solid #c7c7cc; outline: none; border-radius: 6px; selection-background-color: #007aff; selection-color: white; } QComboBox QAbstractItemView::item, QListView::item { padding: 6px; color: #1d1d1f; } QComboBox QAbstractItemView::item:selected, QListView::item:selected { background-color: #007aff; color: white; border-radius: 4px; } QListWidget { background-color: #ffffff; color: #1d1d1f; border: 1px solid #c7c7cc; border-radius: 8px; padding: 8px; outline: none; } QListWidget::item { background-color: #e5e5ea; border-radius: 4px; padding: 4px 8px; margin: 2px; color: #1d1d1f; } QListWidget::item:selected { background-color: #ff3b30; color: white; } QGroupBox { font-weight: bold; color: #1d1d1f; border: 1px solid #c7c7cc; border-radius: 8px; margin-top: 20px; padding-top: 15px; background-color: #ffffff; } QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 15px; top: 0px; color: #007aff; background-color: transparent; } QPushButton { background-color: #ffffff; color: #1d1d1f; border: 1px solid #c7c7cc; border-radius: 6px; padding: 6px 16px; font-weight: bold; } QPushButton:hover { background-color: #f0f0f5; border: 1px solid #8e8e93;} QPushButton:pressed { background-color: #e5e5ea; } QPushButton:disabled { background-color: #f5f5f7; color: #a1a1a6; border: 1px solid #e5e5ea; } QTableWidget { background-color: #ffffff; alternate-background-color: #f2f2f7; color: #1d1d1f; gridline-color: #d2d2d7; border: 1px solid #c7c7cc; border-radius: 8px; } QTableWidget::item:selected { background-color: #007aff; color: white; } QHeaderView::section { background-color: #f5f5f7; color: #86868b; padding: 8px 6px; border: none; border-right: 1px solid #c7c7cc; border-bottom: 1px solid #c7c7cc; font-weight: bold; } QTableCornerButton::section { background-color: #f5f5f7; } QTableWidget QComboBox { min-height: 16px; padding: 2px 4px; margin: 2px; } QTabWidget::pane { border: none; background: transparent; } QTabBar::tab { background: #e5e5ea; color: #86868b; padding: 8px 24px; margin-right: 2px; border-top-left-radius: 6px; border-top-right-radius: 6px; border: none; } QTabBar::tab:selected { background: #f5f5f7; color: #007aff; font-weight: bold; border-bottom: 2px solid #007aff; } QScrollArea { border: none; background-color: transparent; } #ScrollContent { background-color: transparent; } QTextEdit { background-color: #ffffff; color: #1d1d1f; border: 1px solid #c7c7cc; border-radius: 6px; padding: 6px; } QTextEdit#LogView, QTextEdit#BatchLogView { background-color: #1e1e1e; color: #34c759; font-family: Consolas, monospace; border: 1px solid #c7c7cc; border-radius: 8px; padding: 8px; } QProgressBar { border: 1px solid #c7c7cc; border-radius: 6px; text-align: center; color: #1d1d1f; background-color: #e5e5ea; font-weight: bold; height: 16px; } QProgressBar::chunk { background-color: #007aff; border-radius: 5px; } QScrollBar:vertical { border: none; background: transparent; width: 14px; margin: 0px; } QScrollBar::handle:vertical { background: #aeaeb2; border-radius: 7px; min-height: 20px; margin: 2px; } QScrollBar::handle:vertical:hover { background: #8e8e93; } QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; } QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; } QScrollBar:horizontal { border: none; background: transparent; height: 14px; margin: 0px; } QScrollBar::handle:horizontal { background: #aeaeb2; border-radius: 7px; min-width: 20px; margin: 2px; } QScrollBar::handle:horizontal:hover { background: #8e8e93; } QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; } QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: transparent; }"
-STYLE_DARK = "QMainWindow, QDialog { background-color: #1e1e1e; color: #e5e5ea; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif; font-size: 13px; } QWidget { background-color: transparent; color: #e5e5ea; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif; font-size: 13px; } QLabel, QCheckBox, QRadioButton { background: transparent; color: #e5e5ea; } QMessageBox { background-color: #2c2c2e; border-radius: 8px; border: 1px solid #48484a; } QMessageBox QLabel { background-color: transparent; } QLineEdit, QSpinBox, QComboBox { background-color: #121212; color: #ffffff; border: 1px solid #636366; border-radius: 6px; padding: 6px 8px; min-height: 24px; } QLineEdit:focus, QSpinBox:focus, QComboBox:focus { border: 1px solid #0a84ff; background-color: #000000; } QLineEdit:disabled { background-color: #2c2c2e; color: #8e8e93; border: 1px solid #48484a; } QComboBox::drop-down { border: none; width: 20px; } QComboBox QAbstractItemView, QListView { background-color: #1e1e1e; color: #ffffff; border: 1px solid #636366; outline: none; border-radius: 6px; } QListView::item { padding: 8px; } QListView::item:selected { background-color: #0a84ff; color: white; border-radius: 4px; } QListWidget { background-color: #121212; color: #ffffff; border: 1px solid #48484a; border-radius: 8px; padding: 8px; outline: none; } QListWidget::item { background-color: #3a3a3c; border-radius: 4px; padding: 4px 8px; margin: 2px; color: #e5e5ea; } QListWidget::item:selected { background-color: #ff3b30; color: white; } QGroupBox { font-weight: bold; color: #ffffff; border: 1px solid #48484a; border-radius: 8px; margin-top: 20px; padding-top: 15px; background-color: #2c2c2e; } QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 15px; top: 0px; color: #0a84ff; background-color: transparent; } QPushButton { background-color: #3a3a3c; color: #ffffff; border: 1px solid #5c5c5e; border-radius: 6px; padding: 6px 16px; font-weight: bold; } QPushButton:hover { background-color: #48484a; border: 1px solid #8e8e93; } QPushButton:pressed { background-color: #636366; } QPushButton:disabled { background-color: #1e1e1e; color: #636366; border: 1px solid #3a3a3c; } QTableWidget { background-color: #1e1e1e; alternate-background-color: #262628; color: #ffffff; gridline-color: #3a3a3c; border: 1px solid #48484a; border-radius: 8px; } QTableWidget::item:selected { background-color: #0a84ff; color: white; } QHeaderView::section { background-color: #2c2c2e; color: #86868b; padding: 8px 6px; border: none; border-right: 1px solid #48484a; border-bottom: 1px solid #48484a; font-weight: bold; } QTableCornerButton::section { background-color: #2c2c2e; } QTableWidget QComboBox { min-height: 16px; padding: 2px 4px; margin: 2px; } QTabWidget::pane { border: none; background: transparent; } QTabBar::tab { background: #2c2c2e; color: #86868b; padding: 8px 24px; margin-right: 2px; border-top-left-radius: 6px; border-top-right-radius: 6px; border: none; } QTabBar::tab:selected { background: #1e1e1e; color: #0a84ff; font-weight: bold; border-bottom: 2px solid #0a84ff; } QScrollArea { border: none; background-color: transparent; } #ScrollContent { background-color: transparent; } QTextEdit { background-color: #121212; color: #ffffff; border: 1px solid #636366; border-radius: 6px; padding: 8px; } QTextEdit#LogView, QTextEdit#BatchLogView { background-color: #0d0d0d; color: #30d158; font-family: Consolas, monospace; border: 1px solid #48484a; border-radius: 8px; padding: 8px; } QProgressBar { border: 1px solid #48484a; border-radius: 6px; text-align: center; color: #ffffff; background-color: #1e1e1e; font-weight: bold; height: 16px; } QProgressBar::chunk { background-color: #0a84ff; border-radius: 5px; } QScrollBar:vertical { border: none; background: transparent; width: 14px; margin: 0px; } QScrollBar::handle:vertical { background: #636366; border-radius: 7px; min-height: 20px; margin: 2px; } QScrollBar::handle:vertical:hover { background: #8e8e93; } QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; } QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; } QScrollBar:horizontal { border: none; background: transparent; height: 14px; margin: 0px; } QScrollBar::handle:horizontal { background: #636366; border-radius: 7px; min-width: 20px; margin: 2px; } QScrollBar::handle:horizontal:hover { background: #8e8e93; } QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; } QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: transparent; }"
+# 高对比度边框与ToolTip重构
+STYLE_LIGHT = "QMainWindow, QDialog, QWidget { background-color: #f5f5f7; color: #1d1d1f; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif; font-size: 13px; } QToolTip { background-color: #ffffe1; color: #000000; border: 1px solid #000000; padding: 4px; border-radius: 4px; font-size: 13px; } QLabel, QCheckBox, QRadioButton { background: transparent; color: #1d1d1f; } QMessageBox { background-color: #ffffff; border-radius: 8px; border: 1px solid #d2d2d7; } QMessageBox QLabel { background-color: transparent; } QLineEdit, QSpinBox, QComboBox { background-color: #ffffff; color: #1d1d1f; border: 1px solid #666666; border-radius: 6px; padding: 6px 8px; min-height: 24px; } QLineEdit:focus, QSpinBox:focus, QComboBox:focus { border: 1px solid #007aff; } QComboBox::drop-down { border: none; width: 20px; } QComboBox QAbstractItemView, QListView { background-color: #ffffff; color: #1d1d1f; border: 1px solid #666666; outline: none; border-radius: 6px; selection-background-color: #007aff; selection-color: white; } QComboBox QAbstractItemView::item, QListView::item { padding: 6px; color: #1d1d1f; } QComboBox QAbstractItemView::item:selected, QListView::item:selected { background-color: #007aff; color: white; border-radius: 4px; } QListWidget { background-color: #ffffff; color: #1d1d1f; border: 1px solid #666666; border-radius: 8px; padding: 8px; outline: none; } QListWidget::item { background-color: #e5e5ea; border-radius: 4px; padding: 4px 8px; margin: 2px; color: #1d1d1f; } QListWidget::item:selected { background-color: #ff3b30; color: white; } QGroupBox { font-weight: bold; color: #1d1d1f; border: 1px solid #666666; border-radius: 8px; margin-top: 20px; padding-top: 15px; background-color: #ffffff; } QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 15px; top: 0px; color: #007aff; background-color: transparent; } QPushButton { background-color: #ffffff; color: #1d1d1f; border: 1px solid #666666; border-radius: 6px; padding: 6px 16px; font-weight: bold; } QPushButton:hover { background-color: #f0f0f5; border: 1px solid #8e8e93;} QPushButton:pressed { background-color: #e5e5ea; } QPushButton:disabled { background-color: #f5f5f7; color: #a1a1a6; border: 1px solid #e5e5ea; } QTableWidget { background-color: #ffffff; alternate-background-color: #f2f2f7; color: #1d1d1f; gridline-color: #d2d2d7; border: 1px solid #666666; border-radius: 8px; } QTableWidget::item:selected { background-color: #007aff; color: white; } QHeaderView::section { background-color: #f5f5f7; color: #86868b; padding: 8px 6px; border: none; border-right: 1px solid #666666; border-bottom: 1px solid #666666; font-weight: bold; } QTableCornerButton::section { background-color: #f5f5f7; } QTableWidget QComboBox { min-height: 16px; padding: 2px 4px; margin: 2px; } QTabWidget::pane { border: none; background: transparent; } QTabBar::tab { background: #e5e5ea; color: #86868b; padding: 8px 24px; margin-right: 2px; border-top-left-radius: 6px; border-top-right-radius: 6px; border: none; } QTabBar::tab:selected { background: #f5f5f7; color: #007aff; font-weight: bold; border-bottom: 2px solid #007aff; } QScrollArea { border: none; background-color: transparent; } #ScrollContent { background-color: transparent; } QTextEdit { background-color: #ffffff; color: #1d1d1f; border: 1px solid #666666; border-radius: 6px; padding: 6px; } QTextEdit#LogView, QTextEdit#BatchLogView { background-color: #1e1e1e; color: #34c759; font-family: Consolas, monospace; border: 1px solid #666666; border-radius: 8px; padding: 8px; } QProgressBar { border: 1px solid #666666; border-radius: 6px; text-align: center; color: #1d1d1f; background-color: #e5e5ea; font-weight: bold; height: 16px; } QProgressBar::chunk { background-color: #007aff; border-radius: 5px; } QScrollBar:vertical { border: none; background: transparent; width: 14px; margin: 0px; } QScrollBar::handle:vertical { background: #aeaeb2; border-radius: 7px; min-height: 20px; margin: 2px; } QScrollBar::handle:vertical:hover { background: #8e8e93; } QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; } QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; } QScrollBar:horizontal { border: none; background: transparent; height: 14px; margin: 0px; } QScrollBar::handle:horizontal { background: #aeaeb2; border-radius: 7px; min-width: 20px; margin: 2px; } QScrollBar::handle:horizontal:hover { background: #8e8e93; } QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; } QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: transparent; }"
+STYLE_DARK = "QMainWindow, QDialog { background-color: #1e1e1e; color: #e5e5ea; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif; font-size: 13px; } QToolTip { background-color: #2c2c2e; color: #ffffff; border: 1px solid #aaaaaa; padding: 4px; border-radius: 4px; font-size: 13px; } QWidget { background-color: transparent; color: #e5e5ea; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif; font-size: 13px; } QLabel, QCheckBox, QRadioButton { background: transparent; color: #e5e5ea; } QMessageBox { background-color: #2c2c2e; border-radius: 8px; border: 1px solid #aaaaaa; } QMessageBox QLabel { background-color: transparent; } QLineEdit, QSpinBox, QComboBox { background-color: #121212; color: #ffffff; border: 1px solid #aaaaaa; border-radius: 6px; padding: 6px 8px; min-height: 24px; } QLineEdit:focus, QSpinBox:focus, QComboBox:focus { border: 1px solid #0a84ff; background-color: #000000; } QLineEdit:disabled { background-color: #2c2c2e; color: #8e8e93; border: 1px solid #48484a; } QComboBox::drop-down { border: none; width: 20px; } QComboBox QAbstractItemView, QListView { background-color: #1e1e1e; color: #ffffff; border: 1px solid #aaaaaa; outline: none; border-radius: 6px; } QListView::item { padding: 8px; } QListView::item:selected { background-color: #0a84ff; color: white; border-radius: 4px; } QListWidget { background-color: #121212; color: #ffffff; border: 1px solid #aaaaaa; border-radius: 8px; padding: 8px; outline: none; } QListWidget::item { background-color: #3a3a3c; border-radius: 4px; padding: 4px 8px; margin: 2px; color: #e5e5ea; } QListWidget::item:selected { background-color: #ff3b30; color: white; } QGroupBox { font-weight: bold; color: #ffffff; border: 1px solid #aaaaaa; border-radius: 8px; margin-top: 20px; padding-top: 15px; background-color: #2c2c2e; } QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 15px; top: 0px; color: #0a84ff; background-color: transparent; } QPushButton { background-color: #3a3a3c; color: #ffffff; border: 1px solid #aaaaaa; border-radius: 6px; padding: 6px 16px; font-weight: bold; } QPushButton:hover { background-color: #48484a; border: 1px solid #8e8e93; } QPushButton:pressed { background-color: #636366; } QPushButton:disabled { background-color: #1e1e1e; color: #636366; border: 1px solid #3a3a3c; } QTableWidget { background-color: #1e1e1e; alternate-background-color: #262628; color: #ffffff; gridline-color: #3a3a3c; border: 1px solid #aaaaaa; border-radius: 8px; } QTableWidget::item:selected { background-color: #0a84ff; color: white; } QHeaderView::section { background-color: #2c2c2e; color: #86868b; padding: 8px 6px; border: none; border-right: 1px solid #aaaaaa; border-bottom: 1px solid #aaaaaa; font-weight: bold; } QTableCornerButton::section { background-color: #2c2c2e; } QTableWidget QComboBox { min-height: 16px; padding: 2px 4px; margin: 2px; } QTabWidget::pane { border: none; background: transparent; } QTabBar::tab { background: #2c2c2e; color: #86868b; padding: 8px 24px; margin-right: 2px; border-top-left-radius: 6px; border-top-right-radius: 6px; border: none; } QTabBar::tab:selected { background: #1e1e1e; color: #0a84ff; font-weight: bold; border-bottom: 2px solid #0a84ff; } QScrollArea { border: none; background-color: transparent; } #ScrollContent { background-color: transparent; } QTextEdit { background-color: #121212; color: #ffffff; border: 1px solid #aaaaaa; border-radius: 6px; padding: 8px; } QTextEdit#LogView, QTextEdit#BatchLogView { background-color: #0d0d0d; color: #30d158; font-family: Consolas, monospace; border: 1px solid #aaaaaa; border-radius: 8px; padding: 8px; } QProgressBar { border: 1px solid #aaaaaa; border-radius: 6px; text-align: center; color: #ffffff; background-color: #1e1e1e; font-weight: bold; height: 16px; } QProgressBar::chunk { background-color: #0a84ff; border-radius: 5px; } QScrollBar:vertical { border: none; background: transparent; width: 14px; margin: 0px; } QScrollBar::handle:vertical { background: #636366; border-radius: 7px; min-height: 20px; margin: 2px; } QScrollBar::handle:vertical:hover { background: #8e8e93; } QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; } QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; } QScrollBar:horizontal { border: none; background: transparent; height: 14px; margin: 0px; } QScrollBar::handle:horizontal { background: #636366; border-radius: 7px; min-width: 20px; margin: 2px; } QScrollBar::handle:horizontal:hover { background: #8e8e93; } QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; } QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: transparent; }"
 
 SITE_CATEGORIES = ["请选择分类...", "写真", "人像", "风光", "纪实", "杂志", "静物", "儿童", "超现实", "美食", "动物", "人文", "软件", "图书", "预设", "教程", "Special"]
 GLOBAL_TAGS = ["OTHER", "GER", "KR", "US", "UK", "FR", "JP", "CN", "大师", "明星", "杂志", "RAW", "可商用", "古风", "COSER", "私房", "马格南", "时光机", "樱花妹"]
@@ -307,7 +308,10 @@ class BatchWorkerThread(QThread):
                             try:
                                 import qbittorrentapi
                                 client = qbittorrentapi.Client(host=self.config['qb_url'], username=self.config['qb_user'], password=self.config['qb_pwd']); client.auth_log_in()
-                                client.torrents_add(torrent_files=final_torrent_path, save_path=save_dir, is_paused=False, use_auto_torrent_management=False)
+                                add_kwargs = {"torrent_files": final_torrent_path, "save_path": save_dir, "is_paused": False, "use_auto_torrent_management": False}
+                                if self.config.get('qb_category'): add_kwargs['category'] = self.config['qb_category']
+                                if self.config.get('qb_tags'): add_kwargs['tags'] = self.config['qb_tags']
+                                client.torrents_add(**add_kwargs)
                                 self.emit_log(f"📡 [qB做种] 成功推送到 qBittorrent！\n   -> 挂载路径: {save_dir}", "SUCCESS")
                             except Exception as e: self.emit_log(f"⚠️ qB 无法连接: {e}", "WARNING")
                     else:
@@ -393,40 +397,37 @@ class ManagePresetsDialog(QDialog):
     def delete_preset(self, row):
         if QMessageBox.question(self, '确认删除', "确定永久删除此条预设？", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes: del self.parent_win.presets_data[row]; self.parent_win.save_presets(); self.refresh_table(); self.parent_win.refresh_main_preset_combo()
 
-
+# 强力接管独立样式的 RuleWidget 核心重构
 class RuleWidget(QWidget):
-    def __init__(self, parent_layout, rule_data=None):
+    def __init__(self, parent_layout, rule_data=None, is_dark=False):
         super().__init__()
         self.parent_layout = parent_layout
+        self.is_dark = is_dark
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         
         self.combo_type = QComboBox()
         self.combo_type.addItems(["文本替换", "正则匹配"]) 
         self.combo_type.setToolTip("选择解析引擎的匹配模式")
-        self.combo_type.setStyleSheet("QComboBox { padding: 4px 8px; border: 1px solid #8e8e93; border-radius: 4px; }")
         
         self.input_search = QLineEdit()
         self.input_search.setPlaceholderText("[A-Z] (你想消除或替换的特征)")
-        self.input_search.setMinimumWidth(160)
-        self.input_search.setMaximumWidth(220)
+        self.input_search.setMinimumWidth(80)
+        self.input_search.setMaximumWidth(110)
         self.input_search.setToolTip("📌 【查找特征】\n输入你需要查找或消除的文本特征。\n如果左侧选择了'正则匹配'，此处可直接填入正则表达式。")
         
         self.lbl_arrow = QLabel("➔")
-        self.lbl_arrow.setStyleSheet("font-weight: bold; color: #8e8e93; margin: 0 5px;")
+        self.lbl_arrow.setStyleSheet("font-weight: bold; margin: 0 5px;")
         
         self.input_replace = QLineEdit()
         self.input_replace.setPlaceholderText("替换为 (留空表示直接删除)")
-        self.input_replace.setMinimumWidth(160)
-        self.input_replace.setMaximumWidth(220)
+        self.input_replace.setMinimumWidth(80)
+        self.input_replace.setMaximumWidth(110)
         self.input_replace.setToolTip("📌 【替换内容】\n输入你想将其替换成的目标文本。\n如果你只想删除前面查找到的文本特征，请将此处保持留空！")
         
-        style_input = "QLineEdit { padding: 5px; border: 1px solid #8e8e93; border-radius: 4px; }"
-        self.input_search.setStyleSheet(style_input)
-        self.input_replace.setStyleSheet(style_input)
-        
         self.btn_del = QPushButton("🗑")
-        self.btn_del.setStyleSheet("background-color: #ff3b30; color: white; max-width: 32px; font-weight: bold; border-radius: 4px; padding: 5px;")
         self.btn_del.setToolTip("删除此条规则")
         self.btn_del.clicked.connect(self.remove_self)
         
@@ -435,12 +436,40 @@ class RuleWidget(QWidget):
         layout.addWidget(self.lbl_arrow)
         layout.addWidget(self.input_replace)
         layout.addWidget(self.btn_del)
-        layout.addStretch()  # 关键点：用弹簧把所有控件往左边挤压，防止输入框跟随窗口无限拉伸变宽
+        layout.addStretch()  
         
         if rule_data:
             self.combo_type.setCurrentText("正则匹配" if rule_data.get("type") == "regex" else "文本替换")
             self.input_search.setText(rule_data.get("search", ""))
             self.input_replace.setText(rule_data.get("replace", ""))
+
+        self.apply_local_style()
+
+    def apply_local_style(self):
+        # 强制打破 ScrollArea 隔离，对自身内部组件执行绝对控制
+        if self.is_dark:
+            style = """
+                QWidget { background: transparent; }
+                QComboBox, QLineEdit { background-color: #121212; color: #ffffff; border: 1px solid #aaaaaa; border-radius: 4px; padding: 5px; min-height: 24px; }
+                QComboBox:focus, QLineEdit:focus { border: 1px solid #0a84ff; }
+                QComboBox QAbstractItemView { background-color: #1e1e1e; color: #ffffff; selection-background-color: #0a84ff; border: 1px solid #aaaaaa; }
+                QToolTip { background-color: #2c2c2e; color: #ffffff; border: 1px solid #aaaaaa; font-size: 13px; padding: 4px; border-radius: 4px;}
+                QPushButton { background-color: #ff3b30; color: #ffffff; border-radius: 4px; padding: 5px; font-weight: bold; border: none; }
+                QPushButton:hover { background-color: #ff453a; }
+                QLabel { color: #aaaaaa; }
+            """
+        else:
+            style = """
+                QWidget { background: transparent; }
+                QComboBox, QLineEdit { background-color: #ffffff; color: #000000; border: 1px solid #666666; border-radius: 4px; padding: 5px; min-height: 24px; }
+                QComboBox:focus, QLineEdit:focus { border: 1px solid #007aff; }
+                QComboBox QAbstractItemView { background-color: #ffffff; color: #000000; selection-background-color: #007aff; border: 1px solid #666666; }
+                QToolTip { background-color: #ffffe1; color: #000000; border: 1px solid #000000; font-size: 13px; padding: 4px; border-radius: 4px;}
+                QPushButton { background-color: #ff3b30; color: #ffffff; border-radius: 4px; padding: 5px; font-weight: bold; border: none; }
+                QPushButton:hover { background-color: #ff453a; }
+                QLabel { color: #666666; }
+            """
+        self.setStyleSheet(style)
 
     def get_data(self):
         return {
@@ -452,7 +481,6 @@ class RuleWidget(QWidget):
     def remove_self(self):
         self.parent_layout.removeWidget(self)
         self.deleteLater()
-
 
 class PTUploaderBase(QMainWindow):
     def __init__(self):
@@ -496,7 +524,19 @@ class PTUploaderBase(QMainWindow):
         except Exception as e: self.log_msg(f"写入预设文件异常: {e}", "ERROR")
 
     def apply_theme(self, theme_mode):
-        self.current_theme = theme_mode; self.setStyleSheet(STYLE_DARK if theme_mode == "dark" else STYLE_LIGHT); self.refresh_hint_colors()
+        self.current_theme = theme_mode
+        style = STYLE_DARK if theme_mode == "dark" else STYLE_LIGHT
+        self.setStyleSheet(style)
+        QApplication.instance().setStyleSheet(style)
+        self.refresh_hint_colors()
+        
+        # 实时同步那些可能脱离了主窗口继承的 RuleWidget 子组件
+        if hasattr(self, 'layout_rules'):
+            for i in range(self.layout_rules.count()):
+                w = self.layout_rules.itemAt(i).widget()
+                if isinstance(w, RuleWidget):
+                    w.is_dark = (theme_mode == "dark")
+                    w.apply_local_style()
 
     def theme_changed(self): self.apply_theme("dark" if self.combo_theme.currentIndex() == 1 else "light")
 
@@ -515,7 +555,9 @@ class PTUploaderBase(QMainWindow):
             "clean_keywords": [self.list_kw.item(i).text() for i in range(self.list_kw.count())] if hasattr(self, 'list_kw') else [],
             "clean_exts": [self.list_ext.item(i).text() for i in range(self.list_ext.count())] if hasattr(self, 'list_ext') else [],
             "preset_font_size": self.preset_font_size,
-            "custom_rules": self.custom_rules
+            "custom_rules": self.custom_rules,
+            "qb_category": self.input_qb_category.text() if hasattr(self, 'input_qb_category') else "",
+            "qb_tags": self.input_qb_tags.text() if hasattr(self, 'input_qb_tags') else ""
         }
         try:
             with open(os.path.join(self.base_dir, 'config.json'), 'w', encoding='utf-8') as f: json.dump(config_data, f, indent=4, ensure_ascii=False)
@@ -536,11 +578,21 @@ class PTUploaderBase(QMainWindow):
                 self.input_img_token_url.setText(config_data.get("image_token_url") or "https://img.momentpt.top/api/v1/tokens")
                 self.spin_delay.setValue(config_data.get("seed_delay", 3)); self.input_qb_url.setText(config_data.get("qb_url") or "http://127.0.0.1:8080")
                 self.input_qb_user.setText(config_data.get("qb_user") or "admin"); self.input_qb_pwd.setText(config_data.get("qb_pwd", ""))
+                
+                if hasattr(self, 'input_qb_category'): self.input_qb_category.setText(config_data.get("qb_category", ""))
+                if hasattr(self, 'input_qb_tags'): self.input_qb_tags.setText(config_data.get("qb_tags", ""))
+
                 self.chk_qb_add.setChecked(config_data.get("qb_auto_add", True)); self.cb_batch_anon.setChecked(config_data.get("anonymous", True))
                 p_mode = config_data.get("parse_mode", "simple")
                 if p_mode == "none": self.rb_none.setChecked(True)
                 elif p_mode == "full": self.rb_full.setChecked(True)
                 else: self.rb_simple.setChecked(True)
+                
+                if hasattr(self, 'sandbox_combo_mode'):
+                    if p_mode == "none": self.sandbox_combo_mode.setCurrentIndex(2)
+                    elif p_mode == "full": self.sandbox_combo_mode.setCurrentIndex(1)
+                    else: self.sandbox_combo_mode.setCurrentIndex(0)
+
                 if hasattr(self, 'list_kw'): self.list_kw.clear(); self.list_kw.addItems(config_data.get("clean_keywords", []))
                 if hasattr(self, 'list_ext'): self.list_ext.clear(); self.list_ext.addItems(config_data.get("clean_exts", []))
                 self.preset_font_size = config_data.get("preset_font_size", 10)
@@ -551,6 +603,9 @@ class PTUploaderBase(QMainWindow):
             self.input_t_path.setText("./torrents"); self.input_s_path.setText("./seeding"); self.spin_delay.setValue(3); self.input_qb_url.setText("http://127.0.0.1:8080"); self.input_qb_user.setText("admin")
             self.chk_qb_add.setChecked(True); self.rb_simple.setChecked(True); self.preset_font_size = 10
             self.custom_rules = []
+            if hasattr(self, 'input_qb_category'): self.input_qb_category.setText("")
+            if hasattr(self, 'input_qb_tags'): self.input_qb_tags.setText("")
+            if hasattr(self, 'sandbox_combo_mode'): self.sandbox_combo_mode.setCurrentIndex(0)
             
         if hasattr(self, 'sandbox_load_rules'):
             self.sandbox_load_rules()
@@ -614,7 +669,6 @@ class PTUploaderBase(QMainWindow):
             std_name = "-".join([x for x in parts if x])
             
         return std_name, year
-
 
 class PTUploaderFullGUI(PTUploaderBase):
     def init_all(self):
@@ -726,9 +780,9 @@ class PTUploaderFullGUI(PTUploaderBase):
         lbl_info = QLabel(
             "<div style='line-height: 1.6; padding: 5px;'>"
             "<b>💡 名称解析引擎与沙盒测试说明：</b><br>"
-            "&nbsp;&nbsp;1️⃣ <b>【简单提取】：</b> 保留原文件夹名称，仅追加提取出的数量和年份。<i>（例：原标题-2023-50P-Moment）</i><br>"
-            "&nbsp;&nbsp;2️⃣ <b>【强效重组】：</b> 智能剔除原标题中的模特和年份防重复，并严格按照 <i>『主题』-模特-摄影师-年份-数量-Moment</i> 的标准格式重新组装。<br>"
-            "&nbsp;&nbsp;3️⃣ <b>【沙盒规则】：</b> 您在下方添加的自定义处理规则，将<b>优先、且仅针对您的原始标题主体生效</b>，程序绝对不会误伤尾部自动生成的后缀（如 P数、年份 或 Moment 等标识）。"
+            "&nbsp;&nbsp;1. <b>【简单提取】：</b> 保留原文件夹名称，仅追加提取出的数量和年份。<i>（例：原标题-2023-50P-Moment）</i><br>"
+            "&nbsp;&nbsp;2. <b>【强效重组】：</b> 智能剔除原标题中的模特和年份防重复，并严格按照 <i>『主题』-模特-摄影师-年份-数量-Moment</i> 的标准格式重新组装。<br>"
+            "&nbsp;&nbsp;3. <b>【沙盒规则】：</b> 您在下方添加的自定义处理规则，将<b>优先、且仅针对您的原始标题主体生效</b>，程序绝对不会误伤尾部自动生成的后缀（如 P数、年份 或 Moment 等标识）。"
             "</div>"
         )
         lbl_info.setWordWrap(True)
@@ -798,12 +852,13 @@ class PTUploaderFullGUI(PTUploaderBase):
         
         splitter.addWidget(group_left)
         splitter.addWidget(group_right)
-        splitter.setSizes([450, 650])
+        splitter.setSizes([320, 780])
         layout.addWidget(splitter, 1)
 
     def sandbox_add_rule(self, rule_data=None):
         if not isinstance(rule_data, dict): rule_data = None
-        rule_widget = RuleWidget(self.layout_rules, rule_data)
+        is_dark = (self.current_theme == "dark")
+        rule_widget = RuleWidget(self.layout_rules, rule_data, is_dark)
         self.layout_rules.addWidget(rule_widget)
 
     def sandbox_load_rules(self):
@@ -826,6 +881,7 @@ class PTUploaderFullGUI(PTUploaderBase):
         
         self.custom_rules = new_rules
         self.save_config(silent=True)
+        self.log_msg("💾 沙盒自定义解析规则已保存并写入", "SUCCESS")
         QMessageBox.information(self, "成功", "规则已保存并写入 config.json！")
 
     def sandbox_run_test(self):
@@ -846,6 +902,7 @@ class PTUploaderFullGUI(PTUploaderBase):
             return
             
         self.sandbox_table.setRowCount(0)
+        self.log_msg(f"🧪 沙盒运行了解析对照测试，当前推演模式: {mode_text}", "INFO")
         
         for r in range(row_count):
             raw_title = self.table.item(r, 0).text()
@@ -926,11 +983,25 @@ class PTUploaderFullGUI(PTUploaderBase):
         hr = QHBoxLayout(); hr.addWidget(QLabel("自动发种时，两个种子间隔时间:")); self.spin_delay = QSpinBox(); self.spin_delay.setMaximum(9999); hr.addWidget(self.spin_delay); hr.addWidget(QLabel("秒 (默认3秒，为0时不限制)")); hr.addStretch(); fn.addRow("发种限流保护:", hr)
         gn.setLayout(fn); layout.addWidget(gn)
         ga = QGroupBox("⚙️ 防误抓拦截规则与自动化配置"); fa = QFormLayout(); fa.setSpacing(14)
-        self.input_qb_url = QLineEdit(); self.input_qb_user = QLineEdit(); self.input_qb_pwd = QLineEdit(echoMode=QLineEdit.EchoMode.Password); self.chk_qb_add = QCheckBox("将种子自动推送到 qBittorrent 并强制开启做种")
-        fa.addRow("qB 端口地址:", self.input_qb_url); fa.addRow("qB 账号:", self.input_qb_user); fa.addRow("qB 密码:", self.input_qb_pwd); fa.addRow("", self.chk_qb_add)
+        
+        self.input_qb_url = QLineEdit(); self.input_qb_user = QLineEdit(); self.input_qb_pwd = QLineEdit(echoMode=QLineEdit.EchoMode.Password)
+        self.input_qb_category = QLineEdit(); self.input_qb_category.setPlaceholderText("选填，例如：PT")
+        self.input_qb_tags = QLineEdit(); self.input_qb_tags.setPlaceholderText("选填，多个标签请用英文逗号分隔")
+        self.chk_qb_add = QCheckBox("将种子自动推送到 qBittorrent 并强制开启做种")
+        
+        fa.addRow("qB 端口地址:", self.input_qb_url); fa.addRow("qB 账号:", self.input_qb_user); fa.addRow("qB 密码:", self.input_qb_pwd)
+        fa.addRow("qB 下载分类:", self.input_qb_category); fa.addRow("qB 下载标签:", self.input_qb_tags)
+        fa.addRow("", self.chk_qb_add)
+        
         b_qb = QPushButton("测试连接 qBittorrent"); b_qb.setStyleSheet("background-color: #007aff; color: white; border: none;"); b_qb.clicked.connect(self.test_qb_connection); fa.addRow("", b_qb)
         fa.addRow(self.get_hline())
         pl = QVBoxLayout(); self.btn_group_parse = QButtonGroup(); self.rb_none = QRadioButton("禁用提取"); self.rb_simple = QRadioButton("简单提取"); self.rb_full = QRadioButton("强效重组"); self.btn_group_parse.addButton(self.rb_none); self.btn_group_parse.addButton(self.rb_simple); self.btn_group_parse.addButton(self.rb_full)
+        
+        # 联动沙盒下拉菜单的信号
+        self.rb_none.toggled.connect(lambda checked: self.sandbox_combo_mode.setCurrentIndex(2) if checked and hasattr(self, 'sandbox_combo_mode') else None)
+        self.rb_simple.toggled.connect(lambda checked: self.sandbox_combo_mode.setCurrentIndex(0) if checked and hasattr(self, 'sandbox_combo_mode') else None)
+        self.rb_full.toggled.connect(lambda checked: self.sandbox_combo_mode.setCurrentIndex(1) if checked and hasattr(self, 'sandbox_combo_mode') else None)
+        
         pl.addWidget(self.rb_none); pl.addWidget(self.create_hint_label("💡 禁用提取：直接使用资源文件夹的名称作为种子标题，不做任何拼装。\n【适用场景】提前已经按标准修改好文件夹名称。", "info"))
         pl.addWidget(self.rb_simple); pl.addWidget(self.create_hint_label("💡 简单提取 (推荐)：将文件夹完整名称作为『主题』，然后自动补充年份和P数，其他缺失项用预设补齐。\n【举例】文件夹叫：秀人网写真 ➔ 『秀人网写真』-预设模特-预设摄影师-63P-Moment", "info"))
         pl.addWidget(self.rb_full); pl.addWidget(self.create_hint_label("💡 强效重组：根据文件夹的名称来判断，有和预设一样的摄影师/模特，需去掉不在主题里面显示；文件夹名称有疑似日期数字的，需提取年份出来回填，同样也不在主题里面显示。\n例1：MintYe薄荷叶 Vol.004 何梦兮Stacy ➔ 『MintYe薄荷叶 Vol.004』-预设补齐\n例2：MintYe薄荷叶 2021.02.28 Vol.004 何梦兮Stacy ➔ 『MintYe薄荷叶 Vol.004』-预设补齐-2021-63P-Moment", "info")); fa.addRow("名称解析模式:", pl)
@@ -960,6 +1031,7 @@ class PTUploaderFullGUI(PTUploaderBase):
         sel = self.table.selectedRanges()
         if not sel: return QMessageBox.warning(self, "提示", "请先在下方表格中选中要移除的行。")
         for r in reversed(range(sel[0].topRow(), sel[0].bottomRow() + 1)): self.table.removeRow(r)
+        self.log_msg("➖ 已从流水线移除选中的任务行", "INFO")
 
     def batch_rename_files(self):
         if self.table.rowCount() == 0: return QMessageBox.warning(self, "提示", "请先点击【添加文件夹】导入需要处理的内容。")
@@ -972,7 +1044,7 @@ class PTUploaderFullGUI(PTUploaderBase):
             target_files = sorted([os.path.join(root, file) for root, _, files in os.walk(f_item.text()) for file in files if file.lower().endswith(exts)]); temp_files = []
             for fp in target_files: temp_name = os.path.join(os.path.dirname(fp), f"temp_{uuid.uuid4().hex}{os.path.splitext(fp)[1]}"); os.rename(fp, temp_name); temp_files.append(temp_name)
             for i, tp in enumerate(temp_files): os.rename(tp, os.path.join(os.path.dirname(tp), f"{i+1}{os.path.splitext(tp)[1]}")); renamed_total += 1
-        self.log_msg(f"重命名执行完毕，共处理 {renamed_total} 个文件", "SUCCESS"); QMessageBox.information(self, "完成", f"重命名完毕，共处理了 {renamed_total} 个文件。")
+        self.log_msg(f"🔄 序列化重命名执行完毕，共处理 {renamed_total} 个文件", "SUCCESS"); QMessageBox.information(self, "完成", f"重命名完毕，共处理了 {renamed_total} 个文件。")
 
     def open_manage_presets(self): dialog = ManagePresetsDialog(self); dialog.setStyleSheet(self.styleSheet()); dialog.exec()
 
@@ -1024,7 +1096,9 @@ class PTUploaderFullGUI(PTUploaderBase):
         if tree: tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             selected_folders = dialog.selectedFiles()
-            if selected_folders: self.last_dir = os.path.dirname(selected_folders[0])
+            if selected_folders: 
+                self.last_dir = os.path.dirname(selected_folders[0])
+                self.log_msg(f"📁 批量导入了 {len(selected_folders)} 个资源文件夹到流水线", "INFO")
             for path in selected_folders: self.add_single_folder_to_table(os.path.abspath(path))
 
     def add_single_folder_to_table(self, folder_path):
@@ -1116,11 +1190,12 @@ class PTUploaderFullGUI(PTUploaderBase):
         self.table.blockSignals(False)
         if total_cleaned > 0: self.log_msg(f"扫描完毕，共计删除 {total_cleaned} 个违规广告文件。", "SUCCESS"); QMessageBox.information(self, "防误抓提示", f"拦截规则生效，共清理了 {total_cleaned} 个可能会引发站内封号的文件。")
 
-    def log_cover(self, msg):
+    def log_cover(self, msg, level="INFO"):
         time_str = datetime.datetime.now().strftime("%H:%M:%S")
         self.cover_log.append(f"{time_str} | {msg}")
         self.cover_log.verticalScrollBar().setValue(self.cover_log.verticalScrollBar().maximum())
         QApplication.processEvents()
+        self.log_msg(f"[封面拼图] {msg}", level)
 
     def cover_load_folders(self):
         dialog = QFileDialog(self, "选择存放作品的多个文件夹", self.last_dir); dialog.setFileMode(QFileDialog.FileMode.Directory); dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True); dialog.setOption(QFileDialog.Option.ShowDirsOnly, True)
@@ -1128,7 +1203,9 @@ class PTUploaderFullGUI(PTUploaderBase):
         if tree: tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             selected_folders = dialog.selectedFiles()
-            if selected_folders: self.last_dir = os.path.dirname(selected_folders[0])
+            if selected_folders: 
+                self.last_dir = os.path.dirname(selected_folders[0])
+                self.log_msg(f"📁 封面拼图台已加载 {len(selected_folders)} 个资源文件夹", "INFO")
             for path in selected_folders:
                 path = os.path.abspath(path)
                 if not self.cover_list.findItems(path, Qt.MatchFlag.MatchExactly): self.cover_list.addItem(path)
@@ -1143,11 +1220,11 @@ class PTUploaderFullGUI(PTUploaderBase):
         for root, _, files in os.walk(folder_path):
             for f in files:
                 if f.lower().endswith(('.jpg', '.jpeg', '.png')): all_imgs.append(os.path.join(root, f))
-        if not all_imgs: self.lbl_preview.scene.clear(); self.log_cover("❌ 此文件夹内无图片"); return
+        if not all_imgs: self.lbl_preview.scene.clear(); self.log_cover("❌ 此文件夹内无图片", "WARNING"); return
         import random; selected = random.choices(all_imgs, k=min(4, len(all_imgs)))
         while len(selected) < 4: selected.append(selected[0] if selected else "")
         self.lbl_preview.load_images(selected)
-        self.log_cover(f"已随机抽取图库并生成拼图: {os.path.basename(folder_path)}")
+        self.log_cover(f"已随机抽取图库并生成拼图: {os.path.basename(folder_path)}", "INFO")
 
     def cover_change_single_image_from_event(self, idx, current_path):
         folder = os.path.dirname(current_path) if current_path and os.path.exists(current_path) else self.last_dir
@@ -1155,7 +1232,7 @@ class PTUploaderFullGUI(PTUploaderBase):
         if path:
             self.last_dir = os.path.dirname(path)
             self.lbl_preview.replace_image(idx, path)
-            self.log_cover(f"已成功替换第 {idx+1} 张图片")
+            self.log_cover(f"已成功替换第 {idx+1} 张图片", "SUCCESS")
 
     def cover_gen_random(self):
         self.cover_item_selected()
@@ -1169,7 +1246,7 @@ class PTUploaderFullGUI(PTUploaderBase):
         out_path = os.path.join(save_dir, f"{folder_name}.jpg")
         try:
             self.lbl_preview.render_to_file(out_path)
-            self.log_cover(f"✅ 保存成功: {folder_name}.jpg")
+            self.log_cover(f"✅ 保存成功: {folder_name}.jpg", "SUCCESS")
             QMessageBox.information(self, "成功", f"封面已保存！\n\n文件同名绑定策略生效：\n{folder_name}.jpg")
         except Exception as e: self.log_msg(f"保存拼图失败: {e}", "ERROR")
 
@@ -1178,7 +1255,7 @@ class PTUploaderFullGUI(PTUploaderBase):
         if not save_dir or not os.path.exists(save_dir): return QMessageBox.warning(self, "提示", "请先在上方设置一个有效的封面输出目录！")
         count = self.cover_list.count()
         if count == 0: return
-        self.log_cover("🚀 开始后台批量疯狂拼图...")
+        self.log_cover("🚀 开始后台批量疯狂拼图...", "INFO")
         mc = 0; self.cover_progress.setValue(0)
         for i in range(count):
             folder_path = self.cover_list.item(i).text()
@@ -1195,13 +1272,13 @@ class PTUploaderFullGUI(PTUploaderBase):
                     QApplication.processEvents()
                     out_path = os.path.join(save_dir, f"{folder_name}.jpg")
                     self.lbl_preview.render_to_file(out_path)
-                    self.log_cover(f"[{i+1}/{count}] 已生成: {folder_name}.jpg")
+                    self.log_cover(f"[{i+1}/{count}] 已生成: {folder_name}.jpg", "SUCCESS")
                     mc += 1
                 except Exception as e:
-                    self.log_cover(f"批处理拼图中断: {e}")
+                    self.log_cover(f"批处理拼图中断: {e}", "ERROR")
                     break
             self.cover_progress.setValue(int(((i + 1) / count) * 100))
-        self.log_cover(f"🎉 批量拼图结束，成功产出 {mc} 张极品封面！")
+        self.log_cover(f"🎉 批量拼图结束，成功产出 {mc} 张极品封面！", "SUCCESS")
 
     def batch_auto_match_thumbs(self, auto_dir=None):
         if self.table.rowCount() == 0: return False
@@ -1233,7 +1310,7 @@ class PTUploaderFullGUI(PTUploaderBase):
 
     def build_config_for_worker(self):
         return {
-            'pt_url': self.input_pt_url.text().strip() + ('/' if not self.input_pt_url.text().endswith('/') else ''), 'cookie': self.input_cookie.text().strip(), 'torrent_dir': self.get_abs_path(self.input_t_path.text()), 'seeding_dir': self.get_abs_path(self.input_s_path.text()), 'use_zip': self.cb_batch_zip.isChecked(), 'test_mode': self.cb_batch_test.isChecked(), 'anonymous': self.cb_batch_anon.isChecked(), 'category_map': {"写真": "401", "人像": "402", "风光": "403", "纪实": "404", "杂志": "405", "静物": "406", "儿童": "407", "超现实": "408", "美食": "409", "动物": "410", "人文": "411", "软件": "412", "图书": "413", "预设": "414", "教程": "415", "Special": "416"}, 'qb_url': self.input_qb_url.text().strip(), 'qb_user': self.input_qb_user.text().strip(), 'qb_pwd': self.input_qb_pwd.text().strip(), 'add_to_qb': self.chk_qb_add.isChecked(), 'image_token': self.input_img_token.text().strip(), 'image_upload_api': self.input_img_upload_url.text().strip(), 'seed_delay': self.spin_delay.value()
+            'pt_url': self.input_pt_url.text().strip() + ('/' if not self.input_pt_url.text().endswith('/') else ''), 'cookie': self.input_cookie.text().strip(), 'torrent_dir': self.get_abs_path(self.input_t_path.text()), 'seeding_dir': self.get_abs_path(self.input_s_path.text()), 'use_zip': self.cb_batch_zip.isChecked(), 'test_mode': self.cb_batch_test.isChecked(), 'anonymous': self.cb_batch_anon.isChecked(), 'category_map': {"写真": "401", "人像": "402", "风光": "403", "纪实": "404", "杂志": "405", "静物": "406", "儿童": "407", "超现实": "408", "美食": "409", "动物": "410", "人文": "411", "软件": "412", "图书": "413", "预设": "414", "教程": "415", "Special": "416"}, 'qb_url': self.input_qb_url.text().strip(), 'qb_user': self.input_qb_user.text().strip(), 'qb_pwd': self.input_qb_pwd.text().strip(), 'qb_category': self.input_qb_category.text().strip() if hasattr(self, 'input_qb_category') else "", 'qb_tags': self.input_qb_tags.text().strip() if hasattr(self, 'input_qb_tags') else "", 'add_to_qb': self.chk_qb_add.isChecked(), 'image_token': self.input_img_token.text().strip(), 'image_upload_api': self.input_img_upload_url.text().strip(), 'seed_delay': self.spin_delay.value()
         }
 
     def start_worker(self, mode):
@@ -1267,16 +1344,26 @@ class PTUploaderFullGUI(PTUploaderBase):
     def test_pt_connection(self):
         try:
             r = requests.get(self.input_pt_url.text().strip(), headers={"Cookie": self.input_cookie.text()}, timeout=5)
-            if "login" in r.url: QMessageBox.warning(self, "提示", "能连通 PT 站，但被要求登录，请检查 Cookie 是否过期。")
-            else: QMessageBox.information(self, "成功", "PT站点连接顺畅，身份验证成功。")
-        except Exception as e: QMessageBox.critical(self, "错误", f"连接失败: {e}")
+            if "login" in r.url: 
+                self.log_msg("PT站连接成功，但要求登录，可能 Cookie 已失效", "WARNING")
+                QMessageBox.warning(self, "提示", "能连通 PT 站，但被要求登录，请检查 Cookie 是否过期。")
+            else: 
+                self.log_msg("🌐 PT站点连接顺畅，身份验证成功。", "SUCCESS")
+                QMessageBox.information(self, "成功", "PT站点连接顺畅，身份验证成功。")
+        except Exception as e: 
+            self.log_msg(f"PT连通性测试失败: {e}", "ERROR")
+            QMessageBox.critical(self, "错误", f"连接失败: {e}")
 
     def test_qb_connection(self):
         try:
             import qbittorrentapi
             qb = qbittorrentapi.Client(host=self.input_qb_url.text(), username=self.input_qb_user.text(), password=self.input_qb_pwd.text())
-            qb.auth_log_in(); QMessageBox.information(self, "成功", "已成功与本机的 qBittorrent 建立通信。")
-        except Exception as e: QMessageBox.critical(self, "错误", f"无法连接 qBittorrent: {e}")
+            qb.auth_log_in()
+            self.log_msg("📡 已成功与本机的 qBittorrent 建立通信。", "SUCCESS")
+            QMessageBox.information(self, "成功", "已成功与本机的 qBittorrent 建立通信。")
+        except Exception as e: 
+            self.log_msg(f"无法连接 qBittorrent: {e}", "ERROR")
+            QMessageBox.critical(self, "错误", f"无法连接 qBittorrent: {e}")
 
     def get_image_token(self):
         email = self.input_img_email.text().strip(); pwd = self.input_img_pwd.text(); token_url = self.input_img_token_url.text().strip()
