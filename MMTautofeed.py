@@ -92,19 +92,20 @@ class CollageView(QGraphicsView):
         bg_rect.setZValue(-1)
 
         polys = [
-            [(20, 20), (440, 20), (590, 830), (20, 934)],
-            [(460, 20), (1180, 20), (1180, 730), (610, 830)],
-            [(20, 954), (590, 850), (740, 1660), (20, 1660)],
-            [(610, 850), (1180, 750), (1180, 1660), (760, 1660)]
+            [(20, 20), (445, 20), (595, 835), (20, 939)],
+            [(455, 20), (1180, 20), (1180, 735), (605, 835)],
+            [(20, 959), (595, 845), (745, 1660), (20, 1660)],
+            [(605, 845), (1180, 745), (1180, 1660), (755, 1660)]
         ]
         self.containers = []
         for poly in polys:
-            path = get_rounded_poly(poly, 35)
+            # 这里的圆角半径被修改为了 60，以匹配美图秀秀的参考效果
+            path = get_rounded_poly(poly, 60)
             container = ContainerItem(path); self.scene.addItem(container); self.containers.append(container)
             
         self.current_paths = ["", "", "", ""]; self.image_items = [None, None, None, None]
         self.bboxes = [(20,20,570,914), (460,20,720,810), (20,850,720,810), (610,750,570,910)]
-        self.centers = [(305, 477), (820, 425), (380, 1255), (895, 1205)]
+        self.centers = [(307, 479), (820, 425), (380, 1255), (895, 1205)]
 
     def load_images(self, paths):
         for img in self.image_items:
