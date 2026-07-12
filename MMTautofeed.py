@@ -7,11 +7,14 @@ if sys.platform == 'win32':
     except Exception: pass
 elif sys.platform == 'darwin':
     try:
-        from AppKit import NSBundle
+        from AppKit import NSBundle, NSApplication
         bundle = NSBundle.mainBundle()
         if bundle:
             info = bundle.localizedInfoDictionary() or bundle.infoDictionary()
             if info and 'CFBundleName' not in info: info['CFBundleName'] = 'MMTautofeed'
+        
+        app_instance = NSApplication.sharedApplication()
+        app_instance.setActivationPolicy_(0)
     except ImportError: pass
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QGroupBox, QLabel, QComboBox, QPushButton, QTableWidget, QTableWidgetItem, QTextEdit, QLineEdit, QCheckBox, QScrollArea, QGridLayout, QFormLayout, QSpinBox, QHeaderView, QRadioButton, QButtonGroup, QMessageBox, QFileDialog, QDialog, QSizePolicy, QProgressBar, QListWidget, QAbstractItemView, QListView, QTreeView, QFrame, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsPathItem, QGraphicsItem, QSplitter)
@@ -65,6 +68,19 @@ class DraggableImage(QGraphicsPixmapItem):
             self.parent_view.image_double_clicked.emit(self.idx, self.img_path)
         super().mouseDoubleClickEvent(event)
 
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        drop_center = self.sceneBoundingRect().center()
+        target_idx = -1
+        for i, rect in enumerate(self.parent_view.bboxes):
+            x, y, w, h = rect
+            if x <= drop_center.x() <= x + w and y <= drop_center.y() <= y + h:
+                target_idx = i
+                break
+        
+        if target_idx != -1 and target_idx != self.idx:
+            self.parent_view.swap_images(self.idx, target_idx)
+
     def wheelEvent(self, event):
         if not self.isSelected():
             event.ignore(); return
@@ -78,6 +94,7 @@ class DraggableImage(QGraphicsPixmapItem):
 
 class CollageView(QGraphicsView):
     image_double_clicked = pyqtSignal(int, str)
+    image_swapped = pyqtSignal(int, int)
     
     def __init__(self):
         super().__init__()
@@ -99,13 +116,51 @@ class CollageView(QGraphicsView):
         ]
         self.containers = []
         for poly in polys:
-            # 这里的圆角半径被修改为了 60，以匹配美图秀秀的参考效果
             path = get_rounded_poly(poly, 60)
             container = ContainerItem(path); self.scene.addItem(container); self.containers.append(container)
             
         self.current_paths = ["", "", "", ""]; self.image_items = [None, None, None, None]
         self.bboxes = [(20,20,570,914), (460,20,720,810), (20,850,720,810), (610,750,570,910)]
         self.centers = [(307, 479), (820, 425), (380, 1255), (895, 1205)]
+
+    # 核心优化：获取当前画布全景快照（包含图片路径、精准缩放率、移动坐标）
+    def get_state(self):
+        state = []
+        for i in range(4):
+            item = self.image_items[i]
+            if item:
+                state.append({
+                    'path': self.current_paths[i],
+                    'scale': item.scale(),
+                    'pos': (item.pos().x(), item.pos().y())
+                })
+            else:
+                state.append(None)
+        return state
+
+    # 核心优化：从历史快照中直接还原，而不是重头读取重构
+    def load_state(self, state):
+        for img in self.image_items:
+            if img and img.scene(): img.scene().removeItem(img)
+        self.current_paths = ["", "", "", ""]
+        self.image_items = [None, None, None, None]
+        
+        for i in range(4):
+            s = state[i]
+            if s and s.get('path') and os.path.exists(s['path']):
+                self.current_paths[i] = s['path']
+                img = QImage(s['path'])
+                if img.isNull(): continue
+                pixmap = QPixmap.fromImage(img)
+                img_item = DraggableImage(pixmap, self, i, s['path'], parent=self.containers[i])
+                
+                # 强行注入用户先前调整好的各种微调参数
+                img_item.setScale(s['scale'])
+                img_item.setPos(s['pos'][0], s['pos'][1])
+                img_item.setZValue(0)
+                self.image_items[i] = img_item
+                
+        self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def load_images(self, paths):
         for img in self.image_items:
@@ -138,6 +193,13 @@ class CollageView(QGraphicsView):
         img_item.setScale(scale); cx, cy = self.centers[idx]
         img_item.setPos(cx - pixmap.width()/2, cy - pixmap.height()/2)
         img_item.setZValue(0); self.image_items[idx] = img_item
+
+    def swap_images(self, idx1, idx2):
+        path1 = self.current_paths[idx1]
+        path2 = self.current_paths[idx2]
+        self.replace_image(idx1, path2)
+        self.replace_image(idx2, path1)
+        self.image_swapped.emit(idx1, idx2)
 
     def wheelEvent(self, event):
         if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
@@ -398,7 +460,6 @@ class ManagePresetsDialog(QDialog):
     def delete_preset(self, row):
         if QMessageBox.question(self, '确认删除', "确定永久删除此条预设？", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes: del self.parent_win.presets_data[row]; self.parent_win.save_presets(); self.refresh_table(); self.parent_win.refresh_main_preset_combo()
 
-# 强力接管独立样式的 RuleWidget 核心重构
 class RuleWidget(QWidget):
     def __init__(self, parent_layout, rule_data=None, is_dark=False):
         super().__init__()
@@ -447,7 +508,6 @@ class RuleWidget(QWidget):
         self.apply_local_style()
 
     def apply_local_style(self):
-        # 强制打破 ScrollArea 隔离，对自身内部组件执行绝对控制
         if self.is_dark:
             style = """
                 QWidget { background: transparent; }
@@ -490,6 +550,11 @@ class PTUploaderBase(QMainWindow):
         self.resize(1300, 880) 
         self.current_theme = "light"; self.hint_labels = []; self.presets_data = []; self.clean_keywords = []; self.clean_exts = []; self.preset_font_size = 10; self.base_dir = ""; self.last_dir = ""
         self.custom_rules = []
+        
+        self.cover_assignments = {}
+        # 核心优化：新增画布快照内存字典，用于记忆每个文件夹里图片的物理坐标与缩放状态
+        self.cover_states = {} 
+        self.current_preview_folder = None
 
     def init_directories(self):
         if getattr(sys, 'frozen', False):
@@ -531,7 +596,6 @@ class PTUploaderBase(QMainWindow):
         QApplication.instance().setStyleSheet(style)
         self.refresh_hint_colors()
         
-        # 实时同步那些可能脱离了主窗口继承的 RuleWidget 子组件
         if hasattr(self, 'layout_rules'):
             for i in range(self.layout_rules.count()):
                 w = self.layout_rules.itemAt(i).widget()
@@ -616,6 +680,10 @@ class PTUploaderBase(QMainWindow):
         if not path: return self.base_dir
         if path.startswith('~'): path = os.path.expanduser(path)
         if os.path.isabs(path): return os.path.normpath(path)
+        
+        if getattr(sys, 'frozen', False) and sys.platform == 'darwin':
+            return os.path.normpath(os.path.join(os.path.expanduser('~'), path))
+            
         return os.path.normpath(os.path.join(self.base_dir, path))
 
     def browse_folder(self, target_line_edit):
@@ -929,39 +997,39 @@ class PTUploaderFullGUI(PTUploaderBase):
         f_paths.addRow("封面输出目录:", h_dir); g_paths.setLayout(f_paths); layout.addWidget(g_paths, 0)
         
         h_main = QHBoxLayout()
-        g_list = QGroupBox("2. 待处理资源库 (单击选中项会自动抽取图片拼接)"); v_list = QVBoxLayout(); h_list_btns = QHBoxLayout()
+        g_list = QGroupBox("2. 待处理资源库 (允许多选批量操作)"); v_list = QVBoxLayout(); h_list_btns = QHBoxLayout()
         btn_add_f = QPushButton("📁 加载资源文件夹"); btn_add_f.clicked.connect(self.cover_load_folders)
         btn_del_f = QPushButton("➖ 移除选中"); btn_del_f.setStyleSheet("color: #ff3b30;"); btn_del_f.clicked.connect(self.cover_remove_selected_folder)
+        btn_sel_all = QPushButton("☑️ 全选列表"); btn_sel_all.clicked.connect(lambda: self.cover_list.selectAll())
         btn_clear_f = QPushButton("🗑 清空库"); btn_clear_f.clicked.connect(lambda: self.cover_list.clear())
-        h_list_btns.addWidget(btn_add_f); h_list_btns.addWidget(btn_del_f); h_list_btns.addWidget(btn_clear_f); v_list.addLayout(h_list_btns)
-        lbl_hint_list = QLabel("💡 提示：在下边列表中【单击】任意文件夹，右侧工作台将立刻自动随机提取对应的 4 张图片并生成拼接预览。"); lbl_hint_list.setStyleSheet("color: #007aff; font-size: 11px;"); lbl_hint_list.setWordWrap(True); v_list.addWidget(lbl_hint_list)
-        self.cover_list = QListWidget(); self.cover_list.itemSelectionChanged.connect(self.cover_item_selected); v_list.addWidget(self.cover_list); g_list.setLayout(v_list); h_main.addWidget(g_list, 1)
+        h_list_btns.addWidget(btn_add_f); h_list_btns.addWidget(btn_sel_all); h_list_btns.addWidget(btn_del_f); h_list_btns.addWidget(btn_clear_f); v_list.addLayout(h_list_btns)
+        lbl_hint_list = QLabel("💡 提示：按住 Shift 或 Command(Ctrl) 可以多选列表项。"); lbl_hint_list.setStyleSheet("color: #007aff; font-size: 11px;"); lbl_hint_list.setWordWrap(True); v_list.addWidget(lbl_hint_list)
+        self.cover_list = QListWidget()
+        self.cover_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection) 
+        self.cover_list.itemSelectionChanged.connect(self.cover_item_selected); v_list.addWidget(self.cover_list); g_list.setLayout(v_list); h_main.addWidget(g_list, 1)
         
         g_prev = QGroupBox("3. 封面拖拽交互工作台 (原生高精度微积分算法，完美复刻美图秀秀)"); v_prev = QVBoxLayout()
         
-        lbl_prev_hint = QLabel("💡 画布指南：深灰色区域为工作台画布。操作说明：\n1. 【双击图片】可快速替换该位置的图片（自动打开该图所在文件夹）。\n2. 【先单击选中一张照片，然后按住左键拖拽】可直接丝滑调整位置。\n3. 在灰色画布区（不要点图片）【按住 Ctrl + 滚动滚轮】可整体无极缩放整个工作台。"); lbl_prev_hint.setStyleSheet("color: #ff9500; font-size: 11px; font-weight: bold;"); v_prev.addWidget(lbl_prev_hint)
+        lbl_prev_hint = QLabel("💡 画布指南：深灰色区域为工作台画布。操作说明：\n1. 【双击图片】可快速替换该位置的图片。\n2. 【拖拽图片】若拖拽到其他画框内松开，即可直接对调位置！\n3. 在灰色画布区（不要点图片）【按住 Ctrl + 滚动滚轮】可整体无极缩放工作台。"); lbl_prev_hint.setStyleSheet("color: #ff9500; font-size: 11px; font-weight: bold;"); v_prev.addWidget(lbl_prev_hint)
         
         self.lbl_preview = CollageView()
         self.lbl_preview.image_double_clicked.connect(self.cover_change_single_image_from_event)
+        self.lbl_preview.image_swapped.connect(self.cover_on_image_swapped)
         v_prev.addWidget(self.lbl_preview, 1)
         
         self.cover_progress = QProgressBar(); self.cover_progress.setValue(0); self.cover_progress.setFixedHeight(12); v_prev.addWidget(self.cover_progress)
         self.cover_log = QTextEdit(); self.cover_log.setReadOnly(True); self.cover_log.setFixedHeight(60); self.cover_log.setStyleSheet("background-color: #1e1e1e; color: #34c759; font-family: Consolas; font-size: 11px;"); v_prev.addWidget(self.cover_log)
         
         h_actions1 = QHBoxLayout()
-        btn_rand = QPushButton("🎲 重新随机抽取当前这一组")
+        btn_rand = QPushButton("🎲 随机拼图 (针对选中的项)")
         btn_rand.setStyleSheet("background: #007aff; color: white; padding: 8px; border-radius: 5px; font-weight: bold; border: none;")
-        btn_rand.clicked.connect(self.cover_gen_random)
+        btn_rand.clicked.connect(self.cover_gen_random_selected)
         
-        btn_save_single = QPushButton("💾 确认并保存当前预览图")
+        btn_save_single = QPushButton("💾 保存并生成 (针对选中的项)")
         btn_save_single.setStyleSheet("background: #ff9500; color: white; padding: 8px; border-radius: 5px; font-weight: bold; border: none;")
-        btn_save_single.clicked.connect(self.cover_save_current)
+        btn_save_single.clicked.connect(self.cover_save_selected)
         
-        btn_batch_all = QPushButton("🚀 自动对左侧【所有】文件夹生成")
-        btn_batch_all.setStyleSheet("background: #34c759; color: white; padding: 8px; border-radius: 5px; font-weight: bold; border: none;")
-        btn_batch_all.clicked.connect(self.cover_batch_all)
-        
-        h_actions1.addWidget(btn_rand); h_actions1.addWidget(btn_save_single); h_actions1.addWidget(btn_batch_all); v_prev.addLayout(h_actions1)
+        h_actions1.addWidget(btn_rand); h_actions1.addWidget(btn_save_single); v_prev.addLayout(h_actions1)
         g_prev.setLayout(v_prev); h_main.addWidget(g_prev, 2); layout.addLayout(h_main, 1)
 
     def setup_settings_tab(self):
@@ -998,7 +1066,6 @@ class PTUploaderFullGUI(PTUploaderBase):
         fa.addRow(self.get_hline())
         pl = QVBoxLayout(); self.btn_group_parse = QButtonGroup(); self.rb_none = QRadioButton("禁用提取"); self.rb_simple = QRadioButton("简单提取"); self.rb_full = QRadioButton("强效重组"); self.btn_group_parse.addButton(self.rb_none); self.btn_group_parse.addButton(self.rb_simple); self.btn_group_parse.addButton(self.rb_full)
         
-        # 联动沙盒下拉菜单的信号
         self.rb_none.toggled.connect(lambda checked: self.sandbox_combo_mode.setCurrentIndex(2) if checked and hasattr(self, 'sandbox_combo_mode') else None)
         self.rb_simple.toggled.connect(lambda checked: self.sandbox_combo_mode.setCurrentIndex(0) if checked and hasattr(self, 'sandbox_combo_mode') else None)
         self.rb_full.toggled.connect(lambda checked: self.sandbox_combo_mode.setCurrentIndex(1) if checked and hasattr(self, 'sandbox_combo_mode') else None)
@@ -1198,6 +1265,17 @@ class PTUploaderFullGUI(PTUploaderBase):
         QApplication.processEvents()
         self.log_msg(f"[封面拼图] {msg}", level)
 
+    def _assign_random_images(self, folder_path):
+        all_imgs = []
+        for root, _, files in os.walk(folder_path):
+            for f in files:
+                if f.lower().endswith(('.jpg', '.jpeg', '.png')): all_imgs.append(os.path.join(root, f))
+        if not all_imgs: return []
+        import random; selected = random.choices(all_imgs, k=min(4, len(all_imgs)))
+        while len(selected) < 4: selected.append(selected[0] if selected else "")
+        self.cover_assignments[folder_path] = selected
+        return selected
+
     def cover_load_folders(self):
         dialog = QFileDialog(self, "选择存放作品的多个文件夹", self.last_dir); dialog.setFileMode(QFileDialog.FileMode.Directory); dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True); dialog.setOption(QFileDialog.Option.ShowDirsOnly, True)
         tree = dialog.findChild(QTreeView)
@@ -1212,20 +1290,57 @@ class PTUploaderFullGUI(PTUploaderBase):
                 if not self.cover_list.findItems(path, Qt.MatchFlag.MatchExactly): self.cover_list.addItem(path)
 
     def cover_remove_selected_folder(self):
-        for item in self.cover_list.selectedItems(): self.cover_list.takeItem(self.cover_list.row(item))
+        for item in self.cover_list.selectedItems(): 
+            if getattr(self, 'current_preview_folder', None) == item.text():
+                self.current_preview_folder = None
+                self.lbl_preview.scene.clear()
+            
+            # 清理底层驻留内存
+            if item.text() in self.cover_states: del self.cover_states[item.text()]
+            if item.text() in self.cover_assignments: del self.cover_assignments[item.text()]
+            
+            self.cover_list.takeItem(self.cover_list.row(item))
 
     def cover_item_selected(self):
         sel = self.cover_list.selectedItems()
         if not sel: return
-        folder_path = sel[0].text(); all_imgs = []
-        for root, _, files in os.walk(folder_path):
-            for f in files:
-                if f.lower().endswith(('.jpg', '.jpeg', '.png')): all_imgs.append(os.path.join(root, f))
-        if not all_imgs: self.lbl_preview.scene.clear(); self.log_cover("❌ 此文件夹内无图片", "WARNING"); return
-        import random; selected = random.choices(all_imgs, k=min(4, len(all_imgs)))
-        while len(selected) < 4: selected.append(selected[0] if selected else "")
-        self.lbl_preview.load_images(selected)
-        self.log_cover(f"已随机抽取图库并生成拼图: {os.path.basename(folder_path)}", "INFO")
+        
+        # 核心修复2：防多选刷新闪烁，精准定位当前真实点击的 Item
+        current_item = self.cover_list.currentItem()
+        if not current_item or current_item not in sel:
+            current_item = sel[0]
+            
+        folder_path = current_item.text()
+        
+        # 核心修复2：如果在同一个文件夹里重复点击，保护用户的心血，不准覆盖！
+        if getattr(self, 'current_preview_folder', None) == folder_path:
+            return
+            
+        # 核心修复2：【切换前的关键一步】保存正在离开的视图的“全景快照”
+        prev_folder = getattr(self, 'current_preview_folder', None)
+        if prev_folder:
+            self.cover_states[prev_folder] = self.lbl_preview.get_state()
+            self.cover_assignments[prev_folder] = self.lbl_preview.current_paths.copy()
+            
+        self.current_preview_folder = folder_path
+        
+        # 核心修复2：【加载新视图】
+        if folder_path in self.cover_states:
+            # 存在历史快照，精准还原缩放比例和坐标
+            self.lbl_preview.load_state(self.cover_states[folder_path])
+        else:
+            if folder_path in self.cover_assignments:
+                paths = self.cover_assignments[folder_path]
+            else:
+                paths = self._assign_random_images(folder_path)
+                
+            if paths: 
+                self.lbl_preview.load_images(paths)
+                # 初始加载时立刻为其建立初始快照档
+                self.cover_states[folder_path] = self.lbl_preview.get_state()
+            else: 
+                self.lbl_preview.scene.clear()
+                self.log_cover("❌ 此文件夹内无图片", "WARNING")
 
     def cover_change_single_image_from_event(self, idx, current_path):
         folder = os.path.dirname(current_path) if current_path and os.path.exists(current_path) else self.last_dir
@@ -1233,52 +1348,94 @@ class PTUploaderFullGUI(PTUploaderBase):
         if path:
             self.last_dir = os.path.dirname(path)
             self.lbl_preview.replace_image(idx, path)
+            
+            if getattr(self, 'current_preview_folder', None):
+                self.cover_assignments[self.current_preview_folder] = self.lbl_preview.current_paths.copy()
+                
             self.log_cover(f"已成功替换第 {idx+1} 张图片", "SUCCESS")
 
-    def cover_gen_random(self):
-        self.cover_item_selected()
+    def cover_on_image_swapped(self, idx1, idx2):
+        if getattr(self, 'current_preview_folder', None):
+            self.cover_assignments[self.current_preview_folder] = self.lbl_preview.current_paths.copy()
+        self.log_cover(f"已成功对调图 {idx1+1} 和图 {idx2+1} 的位置", "INFO")
 
-    def cover_save_current(self):
+    def cover_gen_random_selected(self):
+        sel = self.cover_list.selectedItems()
+        if not sel: return QMessageBox.warning(self, "提示", "请先在列表中选中要处理的文件夹！")
+        for item in sel:
+            folder_path = item.text()
+            self._assign_random_images(folder_path)
+            
+            # 清除旧的快照，强制洗牌
+            if folder_path in self.cover_states:
+                del self.cover_states[folder_path]
+        
+        # 强制重载当前正在预览的视图
+        if getattr(self, 'current_preview_folder', None) in [item.text() for item in sel]:
+            self.lbl_preview.load_images(self.cover_assignments[self.current_preview_folder])
+            self.cover_states[self.current_preview_folder] = self.lbl_preview.get_state()
+            
+        self.log_cover(f"已为选中的 {len(sel)} 个文件夹重新分配了随机图库", "SUCCESS")
+
+    def cover_save_selected(self):
         save_dir = self.cover_save_dir.text().strip()
         if not save_dir or not os.path.exists(save_dir): return QMessageBox.warning(self, "提示", "请先在上方设置一个有效的封面输出目录！")
         sel = self.cover_list.selectedItems()
-        if not sel: return
-        folder_name = os.path.basename(sel[0].text())
-        out_path = os.path.join(save_dir, f"{folder_name}.jpg")
-        try:
-            self.lbl_preview.render_to_file(out_path)
-            self.log_cover(f"✅ 保存成功: {folder_name}.jpg", "SUCCESS")
-            QMessageBox.information(self, "成功", f"封面已保存！\n\n文件同名绑定策略生效：\n{folder_name}.jpg")
-        except Exception as e: self.log_msg(f"保存拼图失败: {e}", "ERROR")
+        if not sel: return QMessageBox.warning(self, "提示", "请先在列表中选中要生成的文件夹！")
+        
+        self.log_cover(f"🚀 开始批量生成 {len(sel)} 个拼图...", "INFO")
+        self.cover_progress.setValue(0)
+        mc = 0
+        
+        current_preview = getattr(self, 'current_preview_folder', None)
+        
+        # 核心修复3：在后台轮询前，强行把当前视图再保存一次快照
+        if current_preview:
+            self.cover_states[current_preview] = self.lbl_preview.get_state()
+            self.cover_assignments[current_preview] = self.lbl_preview.current_paths.copy()
+        
+        # 核心修复3：将当前正在查看的项放到队伍的最后去处理
+        items_to_process = list(sel)
+        current_item_obj = None
+        for item in items_to_process:
+            if item.text() == current_preview:
+                current_item_obj = item
+                break
+                
+        if current_item_obj:
+            items_to_process.remove(current_item_obj)
+            items_to_process.append(current_item_obj) 
 
-    def cover_batch_all(self):
-        save_dir = self.cover_save_dir.text().strip()
-        if not save_dir or not os.path.exists(save_dir): return QMessageBox.warning(self, "提示", "请先在上方设置一个有效的封面输出目录！")
-        count = self.cover_list.count()
-        if count == 0: return
-        self.log_cover("🚀 开始后台批量疯狂拼图...", "INFO")
-        mc = 0; self.cover_progress.setValue(0)
-        for i in range(count):
-            folder_path = self.cover_list.item(i).text()
+        for i, item in enumerate(items_to_process):
+            folder_path = item.text()
             folder_name = os.path.basename(folder_path)
-            all_imgs = []
-            for root, _, files in os.walk(folder_path):
-                for f in files:
-                    if f.lower().endswith(('.jpg', '.jpeg', '.png')): all_imgs.append(os.path.join(root, f))
-            if all_imgs:
-                import random; selected = random.choices(all_imgs, k=min(4, len(all_imgs)))
-                while len(selected) < 4: selected.append(selected[0] if selected else "")
-                try:
-                    self.lbl_preview.load_images(selected)
-                    QApplication.processEvents()
-                    out_path = os.path.join(save_dir, f"{folder_name}.jpg")
-                    self.lbl_preview.render_to_file(out_path)
-                    self.log_cover(f"[{i+1}/{count}] 已生成: {folder_name}.jpg", "SUCCESS")
-                    mc += 1
-                except Exception as e:
-                    self.log_cover(f"批处理拼图中断: {e}", "ERROR")
-                    break
-            self.cover_progress.setValue(int(((i + 1) / count) * 100))
+            
+            if folder_path not in self.cover_assignments:
+                self._assign_random_images(folder_path)
+            
+            paths = self.cover_assignments.get(folder_path)
+            if not paths: continue
+            
+            # 核心修复3：如果处理的不是当前项，从快照中读取还原（绝不调用默认的 load_images 去破坏排版）
+            if folder_path != current_preview:
+                if folder_path in self.cover_states:
+                    self.lbl_preview.load_state(self.cover_states[folder_path])
+                else:
+                    self.lbl_preview.load_images(paths)
+                    self.cover_states[folder_path] = self.lbl_preview.get_state()
+                QApplication.processEvents()
+                
+            out_path = os.path.join(save_dir, f"{folder_name}.jpg")
+            self.lbl_preview.render_to_file(out_path)
+            self.log_cover(f"[{i+1}/{len(sel)}] 已生成: {folder_name}.jpg", "SUCCESS")
+            mc += 1
+            self.cover_progress.setValue(int(((i + 1) / len(sel)) * 100))
+            
+        # 安全机制：全流程走完后，确保画面绝对停留在之前用户编辑的那个状态
+        if current_preview:
+            if current_preview in self.cover_states:
+                self.lbl_preview.load_state(self.cover_states[current_preview])
+            
         self.log_cover(f"🎉 批量拼图结束，成功产出 {mc} 张极品封面！", "SUCCESS")
 
     def batch_auto_match_thumbs(self, auto_dir=None):
