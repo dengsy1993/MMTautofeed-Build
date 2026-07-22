@@ -70,16 +70,15 @@ class DraggableImage(QGraphicsPixmapItem):
 
     def mouseReleaseEvent(self, event):
         super().mouseReleaseEvent(event)
-        drop_center = self.sceneBoundingRect().center()
-        target_idx = -1
-        for i, rect in enumerate(self.parent_view.bboxes):
-            x, y, w, h = rect
-            if x <= drop_center.x() <= x + w and y <= drop_center.y() <= y + h:
-                target_idx = i
-                break
         
-        if target_idx != -1 and target_idx != self.idx:
-            self.parent_view.swap_images(self.idx, target_idx)
+        # [优化修复] 防飞出修复：如果完全不在自己的画框内，复位到中心
+        if self.sceneBoundingRect().width() > 0:
+            container_rect = self.parentItem().sceneBoundingRect()
+            item_rect = self.sceneBoundingRect()
+            if not container_rect.intersects(item_rect):
+                cx, cy = self.parent_view.centers[self.idx]
+                pixmap = self.pixmap()
+                self.setPos(cx - pixmap.width()/2, cy - pixmap.height()/2)
 
     def wheelEvent(self, event):
         if not self.isSelected():
@@ -123,7 +122,7 @@ class CollageView(QGraphicsView):
         self.bboxes = [(20,20,570,914), (460,20,720,810), (20,850,720,810), (610,750,570,910)]
         self.centers = [(307, 479), (820, 425), (380, 1255), (895, 1205)]
 
-    # 核心优化：获取当前画布全景快照（包含图片路径、精准缩放率、移动坐标）
+    # 核心优化：获取当前画布全景快照
     def get_state(self):
         state = []
         for i in range(4):
@@ -138,10 +137,14 @@ class CollageView(QGraphicsView):
                 state.append(None)
         return state
 
-    # 核心优化：从历史快照中直接还原，而不是重头读取重构
+    # 核心修复：防 C++ Runtime 内存竞态条件闪退
     def load_state(self, state):
         for img in self.image_items:
-            if img and img.scene(): img.scene().removeItem(img)
+            if img:
+                try:
+                    if img.scene(): img.scene().removeItem(img)
+                except RuntimeError:
+                    pass
         self.current_paths = ["", "", "", ""]
         self.image_items = [None, None, None, None]
         
@@ -162,9 +165,14 @@ class CollageView(QGraphicsView):
                 
         self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
+    # 核心修复：防 C++ Runtime 内存竞态条件闪退
     def load_images(self, paths):
         for img in self.image_items:
-            if img and img.scene(): img.scene().removeItem(img)
+            if img:
+                try:
+                    if img.scene(): img.scene().removeItem(img)
+                except RuntimeError:
+                    pass
         self.current_paths = list(paths) + [""] * (4 - len(paths))
         for i in range(4):
             path = self.current_paths[i]
@@ -181,8 +189,13 @@ class CollageView(QGraphicsView):
                 img_item.setZValue(0); self.image_items[i] = img_item
         self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
+    # 核心修复：防 C++ Runtime 内存竞态条件闪退
     def replace_image(self, idx, path):
-        if self.image_items[idx] and self.image_items[idx].scene(): self.scene.removeItem(self.image_items[idx])
+        if self.image_items[idx]:
+            try:
+                if self.image_items[idx].scene(): self.scene.removeItem(self.image_items[idx])
+            except RuntimeError:
+                pass
         self.current_paths[idx] = path; img = QImage(path)
         if img.isNull(): return
         pixmap = QPixmap.fromImage(img)
@@ -273,19 +286,13 @@ class BatchWorkerThread(QThread):
                 try:
                     target_path = folder_path
                     if use_zip:
-                        set_p(15); zip_name = f"{std_name}.zip"; zip_path = os.path.join(seeding_dir, zip_name); self.emit_log(f"📦 [文件打包] 制作极速压缩 ZIP: {zip_name} ...", "INFO")
-                        try:
-                            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=1) as zipf:
-                                for root, _, files in os.walk(folder_path):
-                                    for f in files:
-                                        if not self.is_running: raise InterruptedError()
-                                        zipf.write(os.path.join(root, f), os.path.relpath(os.path.join(root, f), os.path.join(folder_path, '..')))
-                        except TypeError:
-                            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                                for root, _, files in os.walk(folder_path):
-                                    for f in files:
-                                        if not self.is_running: raise InterruptedError()
-                                        zipf.write(os.path.join(root, f), os.path.relpath(os.path.join(root, f), os.path.join(folder_path, '..')))
+                        set_p(15); zip_name = f"{std_name}.zip"; zip_path = os.path.join(seeding_dir, zip_name); self.emit_log(f"📦 [文件打包] 制作极速零压缩封包 ZIP: {zip_name} ...", "INFO")
+                        # 性能优化核心：使用 ZIP_STORED（无压缩），利用多媒体文件已是高压缩率的特性，直接跑满硬盘 I/O，规避 CPU 计算瓶颈
+                        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as zipf:
+                            for root, _, files in os.walk(folder_path):
+                                for f in files:
+                                    if not self.is_running: raise InterruptedError()
+                                    zipf.write(os.path.join(root, f), os.path.relpath(os.path.join(root, f), os.path.join(folder_path, '..')))
                         target_path = zip_path; self.emit_log(f"✅ ZIP 打包完毕！", "SUCCESS")
                     set_p(35); self.emit_log(f"⚙️ [种子生成] 计算哈希...", "INFO")
                     t = torf.Torrent(path=target_path, trackers=[announce_url], private=True); t.generate()
@@ -321,7 +328,7 @@ class BatchWorkerThread(QThread):
                                 else: self.emit_log(f"❌ 图床拒绝上传! 状态码: {img_res.status_code} | 拦截: {img_res.text[:100]}", "ERROR")
                                 break 
                             except Exception as e: 
-                                self.emit_log(f"⚠️ 图床波动({e})，重试 {retry+1}/3", "WARNING"); self.msleep(2000)
+                                self.emit_log(f"⚠️ 图床波动({e})，重试 {retry+1}/3", "WARNING"); QThread.msleep(2000)
                                 if retry == 2: raise
                     except Exception as e: self.emit_log(f"❌ 图床通讯失败: {e}", "ERROR")
                 set_p(65 if self.mode == 'auto' else 30)
@@ -366,7 +373,7 @@ class BatchWorkerThread(QThread):
                                     else: 
                                         if dl_retry == 2: self.emit_log("拉取失败，降级使用本地种子推送", "WARNING")
                                 except Exception as e:
-                                    self.emit_log(f"⚠️ 官方种子拉取超时({e})，重试 {dl_retry+1}/3", "WARNING"); self.msleep(2000)
+                                    self.emit_log(f"⚠️ 官方种子拉取超时({e})，重试 {dl_retry+1}/3", "WARNING"); QThread.msleep(2000)
                             set_p(95 if self.mode == 'auto' else 90); save_dir = os.path.abspath(seeding_dir if use_zip else os.path.dirname(folder_path))
                             try:
                                 import qbittorrentapi
@@ -386,9 +393,8 @@ class BatchWorkerThread(QThread):
                 delay_sec = self.config['seed_delay']; self.emit_log(f"⏳ 触发限流保护，等待 {delay_sec} 秒...", "INFO")
                 for wait_sec in range(delay_sec, 0, -1):
                     if not self.is_running: break
-                    self.emit_log(f"⏳ 倒计时: {wait_sec} 秒", "INFO"); self.msleep(1000) 
+                    self.emit_log(f"⏳ 倒计时: {wait_sec} 秒", "INFO"); QThread.msleep(1000) 
         self.progress_signal.emit(100); self.finished_signal.emit(success_count, total_tasks)
-
 class AddPresetDialog(QDialog):
     def __init__(self, parent=None, font_size=10):
         super().__init__(parent); self.setWindowTitle("添加 / 编辑预设方案"); self.resize(980, 700)
@@ -552,7 +558,6 @@ class PTUploaderBase(QMainWindow):
         self.custom_rules = []
         
         self.cover_assignments = {}
-        # 核心优化：新增画布快照内存字典，用于记忆每个文件夹里图片的物理坐标与缩放状态
         self.cover_states = {} 
         self.current_preview_folder = None
 
@@ -736,6 +741,8 @@ class PTUploaderBase(QMainWindow):
             
             parts = [f"『{raw_title}』" if raw_title else "", p_m, p_p, year, amount_str, "Moment"]
             std_name = "-".join([x for x in parts if x])
+            # 防止Mac/Windows下含有特殊符号（如斜杠/）破坏Zip生成的路径结构
+            std_name = std_name.replace("/", "_").replace("\\", "_").replace(":", "_")
             
         return std_name, year
 
@@ -743,8 +750,15 @@ class PTUploaderFullGUI(PTUploaderBase):
     def init_all(self):
         self.init_directories()
         icon_path_win = os.path.join(self.base_dir, 'app_icon.ico'); icon_path_mac = os.path.join(self.base_dir, 'app_icon.icns')
-        if os.path.exists(icon_path_win): self.setWindowIcon(QIcon(icon_path_win))
-        elif os.path.exists(icon_path_mac): self.setWindowIcon(QIcon(icon_path_mac))
+        
+        # Mac环境下图标缺失：调用全局 Application 实例并注入 Dock 栏图标
+        if os.path.exists(icon_path_win): 
+            QApplication.instance().setWindowIcon(QIcon(icon_path_win))
+            self.setWindowIcon(QIcon(icon_path_win))
+        elif os.path.exists(icon_path_mac): 
+            QApplication.instance().setWindowIcon(QIcon(icon_path_mac))
+            self.setWindowIcon(QIcon(icon_path_mac))
+            
         self.load_presets()
         
         self.tabs = QTabWidget()
@@ -1010,7 +1024,8 @@ class PTUploaderFullGUI(PTUploaderBase):
         
         g_prev = QGroupBox("3. 封面拖拽交互工作台 (原生高精度微积分算法，完美复刻美图秀秀)"); v_prev = QVBoxLayout()
         
-        lbl_prev_hint = QLabel("💡 画布指南：深灰色区域为工作台画布。操作说明：\n1. 【双击图片】可快速替换该位置的图片。\n2. 【拖拽图片】若拖拽到其他画框内松开，即可直接对调位置！\n3. 在灰色画布区（不要点图片）【按住 Ctrl + 滚动滚轮】可整体无极缩放工作台。"); lbl_prev_hint.setStyleSheet("color: #ff9500; font-size: 11px; font-weight: bold;"); v_prev.addWidget(lbl_prev_hint)
+        lbl_prev_hint = QLabel("💡 画布指南：深灰色区域为工作台画布。操作说明：\n1. 【双击图片】可快速替换该位置的图片。\n2. 在灰色画布区（不要点图片）【按住 Ctrl + 滚动滚轮】可整体无极缩放工作台。\n3. 若图片被拖拽出画框太远，松开鼠标会自动复位。")
+        lbl_prev_hint.setStyleSheet("color: #ff9500; font-size: 11px; font-weight: bold;"); v_prev.addWidget(lbl_prev_hint)
         
         self.lbl_preview = CollageView()
         self.lbl_preview.image_double_clicked.connect(self.cover_change_single_image_from_event)
@@ -1159,7 +1174,13 @@ class PTUploaderFullGUI(PTUploaderBase):
                 self.on_row_preset_changed(row)
 
     def batch_add_folder(self):
-        dialog = QFileDialog(self, "选择存放作品的多个文件夹 (Win按Ctrl / Mac按Command 多选)", self.last_dir); dialog.setFileMode(QFileDialog.FileMode.Directory); dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True); dialog.setOption(QFileDialog.Option.ShowDirsOnly, True)
+        dialog = QFileDialog(self, "选择存放作品的多个文件夹 (Win按Ctrl / Mac按Command 多选)", self.last_dir); dialog.setFileMode(QFileDialog.FileMode.Directory)
+        
+        # [修复] 释放 macOS 原生弹窗，解决因为 TCC 权限被锁导致看不到文件夹的问题
+        if sys.platform != 'darwin': 
+            dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+            
+        dialog.setOption(QFileDialog.Option.ShowDirsOnly, True)
         tree = dialog.findChild(QTreeView)
         if tree: tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -1243,9 +1264,10 @@ class PTUploaderFullGUI(PTUploaderBase):
             img_c = len([f for f in os.listdir(f_path) if f.lower().endswith(('.jpg', '.jpeg', '.png'))])
             vid_c = len([f for f in os.listdir(f_path) if f.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.ts'))])
             amount_parts = []
+            
             if img_c > 0: amount_parts.append(f"{img_c}P")
             if vid_c > 0: amount_parts.append(f"{vid_c}V")
-            amount_str = "/".join(amount_parts); self.table.setItem(row, 5, QTableWidgetItem(amount_str))
+            amount_str = "".join(amount_parts); self.table.setItem(row, 5, QTableWidgetItem(amount_str))
             
             std_name, year = self.get_parsed_name(f_name, amount_str, preset, parse_mode)
             
@@ -1277,7 +1299,13 @@ class PTUploaderFullGUI(PTUploaderBase):
         return selected
 
     def cover_load_folders(self):
-        dialog = QFileDialog(self, "选择存放作品的多个文件夹", self.last_dir); dialog.setFileMode(QFileDialog.FileMode.Directory); dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True); dialog.setOption(QFileDialog.Option.ShowDirsOnly, True)
+        dialog = QFileDialog(self, "选择存放作品的多个文件夹", self.last_dir); dialog.setFileMode(QFileDialog.FileMode.Directory)
+        
+        # [修复] 释放 macOS 原生弹窗
+        if sys.platform != 'darwin': 
+            dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+            
+        dialog.setOption(QFileDialog.Option.ShowDirsOnly, True)
         tree = dialog.findChild(QTreeView)
         if tree: tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -1295,7 +1323,6 @@ class PTUploaderFullGUI(PTUploaderBase):
                 self.current_preview_folder = None
                 self.lbl_preview.scene.clear()
             
-            # 清理底层驻留内存
             if item.text() in self.cover_states: del self.cover_states[item.text()]
             if item.text() in self.cover_assignments: del self.cover_assignments[item.text()]
             
@@ -1305,18 +1332,15 @@ class PTUploaderFullGUI(PTUploaderBase):
         sel = self.cover_list.selectedItems()
         if not sel: return
         
-        # 核心修复2：防多选刷新闪烁，精准定位当前真实点击的 Item
         current_item = self.cover_list.currentItem()
         if not current_item or current_item not in sel:
             current_item = sel[0]
             
         folder_path = current_item.text()
         
-        # 核心修复2：如果在同一个文件夹里重复点击，保护用户的心血，不准覆盖！
         if getattr(self, 'current_preview_folder', None) == folder_path:
             return
             
-        # 核心修复2：【切换前的关键一步】保存正在离开的视图的“全景快照”
         prev_folder = getattr(self, 'current_preview_folder', None)
         if prev_folder:
             self.cover_states[prev_folder] = self.lbl_preview.get_state()
@@ -1324,9 +1348,7 @@ class PTUploaderFullGUI(PTUploaderBase):
             
         self.current_preview_folder = folder_path
         
-        # 核心修复2：【加载新视图】
         if folder_path in self.cover_states:
-            # 存在历史快照，精准还原缩放比例和坐标
             self.lbl_preview.load_state(self.cover_states[folder_path])
         else:
             if folder_path in self.cover_assignments:
@@ -1336,7 +1358,6 @@ class PTUploaderFullGUI(PTUploaderBase):
                 
             if paths: 
                 self.lbl_preview.load_images(paths)
-                # 初始加载时立刻为其建立初始快照档
                 self.cover_states[folder_path] = self.lbl_preview.get_state()
             else: 
                 self.lbl_preview.scene.clear()
@@ -1366,11 +1387,9 @@ class PTUploaderFullGUI(PTUploaderBase):
             folder_path = item.text()
             self._assign_random_images(folder_path)
             
-            # 清除旧的快照，强制洗牌
             if folder_path in self.cover_states:
                 del self.cover_states[folder_path]
         
-        # 强制重载当前正在预览的视图
         if getattr(self, 'current_preview_folder', None) in [item.text() for item in sel]:
             self.lbl_preview.load_images(self.cover_assignments[self.current_preview_folder])
             self.cover_states[self.current_preview_folder] = self.lbl_preview.get_state()
@@ -1389,12 +1408,10 @@ class PTUploaderFullGUI(PTUploaderBase):
         
         current_preview = getattr(self, 'current_preview_folder', None)
         
-        # 核心修复3：在后台轮询前，强行把当前视图再保存一次快照
         if current_preview:
             self.cover_states[current_preview] = self.lbl_preview.get_state()
             self.cover_assignments[current_preview] = self.lbl_preview.current_paths.copy()
         
-        # 核心修复3：将当前正在查看的项放到队伍的最后去处理
         items_to_process = list(sel)
         current_item_obj = None
         for item in items_to_process:
@@ -1416,7 +1433,6 @@ class PTUploaderFullGUI(PTUploaderBase):
             paths = self.cover_assignments.get(folder_path)
             if not paths: continue
             
-            # 核心修复3：如果处理的不是当前项，从快照中读取还原（绝不调用默认的 load_images 去破坏排版）
             if folder_path != current_preview:
                 if folder_path in self.cover_states:
                     self.lbl_preview.load_state(self.cover_states[folder_path])
@@ -1431,7 +1447,6 @@ class PTUploaderFullGUI(PTUploaderBase):
             mc += 1
             self.cover_progress.setValue(int(((i + 1) / len(sel)) * 100))
             
-        # 安全机制：全流程走完后，确保画面绝对停留在之前用户编辑的那个状态
         if current_preview:
             if current_preview in self.cover_states:
                 self.lbl_preview.load_state(self.cover_states[current_preview])
