@@ -122,7 +122,6 @@ class CollageView(QGraphicsView):
         self.bboxes = [(20,20,570,914), (460,20,720,810), (20,850,720,810), (610,750,570,910)]
         self.centers = [(307, 479), (820, 425), (380, 1255), (895, 1205)]
 
-    # 核心优化：获取当前画布全景快照
     def get_state(self):
         state = []
         for i in range(4):
@@ -137,7 +136,6 @@ class CollageView(QGraphicsView):
                 state.append(None)
         return state
 
-    # 核心修复：防 C++ Runtime 内存竞态条件闪退
     def load_state(self, state):
         for img in self.image_items:
             if img:
@@ -157,7 +155,6 @@ class CollageView(QGraphicsView):
                 pixmap = QPixmap.fromImage(img)
                 img_item = DraggableImage(pixmap, self, i, s['path'], parent=self.containers[i])
                 
-                # 强行注入用户先前调整好的各种微调参数
                 img_item.setScale(s['scale'])
                 img_item.setPos(s['pos'][0], s['pos'][1])
                 img_item.setZValue(0)
@@ -165,7 +162,6 @@ class CollageView(QGraphicsView):
                 
         self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
-    # 核心修复：防 C++ Runtime 内存竞态条件闪退
     def load_images(self, paths):
         for img in self.image_items:
             if img:
@@ -189,7 +185,6 @@ class CollageView(QGraphicsView):
                 img_item.setZValue(0); self.image_items[i] = img_item
         self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
-    # 核心修复：防 C++ Runtime 内存竞态条件闪退
     def replace_image(self, idx, path):
         if self.image_items[idx]:
             try:
@@ -287,7 +282,6 @@ class BatchWorkerThread(QThread):
                     target_path = folder_path
                     if use_zip:
                         set_p(15); zip_name = f"{std_name}.zip"; zip_path = os.path.join(seeding_dir, zip_name); self.emit_log(f"📦 [文件打包] 制作极速零压缩封包 ZIP: {zip_name} ...", "INFO")
-                        # 性能优化核心：使用 ZIP_STORED（无压缩），利用多媒体文件已是高压缩率的特性，直接跑满硬盘 I/O，规避 CPU 计算瓶颈
                         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as zipf:
                             for root, _, files in os.walk(folder_path):
                                 for f in files:
@@ -310,7 +304,9 @@ class BatchWorkerThread(QThread):
                         mime_type = mimetypes.guess_type(task['thumb_path'])[0] or 'image/jpeg'
                         file_size_mb = os.path.getsize(task['thumb_path']) / (1024 * 1024)
                         if file_size_mb > 5.0: self.emit_log(f"⚠️ 警告: 封面体积({file_size_mb:.2f}MB)超过 5MB 限制！", "WARNING")
-                        for retry in range(3):
+                        
+                        retry_limit = self.config.get('image_retry_count', 3)
+                        for retry in range(retry_limit):
                             try:
                                 with open(task['thumb_path'], 'rb') as f:
                                     files = {"file": (os.path.basename(task['thumb_path']), f, mime_type)}; headers = {"Accept": "application/json", "User-Agent": "Mozilla/5.0"}
@@ -328,8 +324,8 @@ class BatchWorkerThread(QThread):
                                 else: self.emit_log(f"❌ 图床拒绝上传! 状态码: {img_res.status_code} | 拦截: {img_res.text[:100]}", "ERROR")
                                 break 
                             except Exception as e: 
-                                self.emit_log(f"⚠️ 图床波动({e})，重试 {retry+1}/3", "WARNING"); QThread.msleep(2000)
-                                if retry == 2: raise
+                                self.emit_log(f"⚠️ 图床波动({e})，重试 {retry+1}/{retry_limit}", "WARNING"); QThread.msleep(2000)
+                                if retry == retry_limit - 1: raise
                     except Exception as e: self.emit_log(f"❌ 图床通讯失败: {e}", "ERROR")
                 set_p(65 if self.mode == 'auto' else 30)
                 cat_id = self.config['category_map'].get(task['category'], "401"); mode_4_cats = ["401", "402", "403", "404", "416", "415", "414", "413", "412", "411", "405"]
@@ -395,6 +391,7 @@ class BatchWorkerThread(QThread):
                     if not self.is_running: break
                     self.emit_log(f"⏳ 倒计时: {wait_sec} 秒", "INFO"); QThread.msleep(1000) 
         self.progress_signal.emit(100); self.finished_signal.emit(success_count, total_tasks)
+
 class AddPresetDialog(QDialog):
     def __init__(self, parent=None, font_size=10):
         super().__init__(parent); self.setWindowTitle("添加 / 编辑预设方案"); self.resize(980, 700)
@@ -620,6 +617,7 @@ class PTUploaderBase(QMainWindow):
             "torrent_path": self.input_t_path.text(), "seeding_path": self.input_s_path.text(),
             "image_email": self.input_img_email.text(), "image_pwd": self.input_img_pwd.text(), "image_token": self.input_img_token.text(),
             "image_upload_api": self.input_img_upload_url.text(), "image_token_url": self.input_img_token_url.text(),
+            "image_retry_count": self.spin_img_retry.value() if hasattr(self, 'spin_img_retry') else 3,
             "seed_delay": self.spin_delay.value(), "qb_url": self.input_qb_url.text(), "qb_user": self.input_qb_user.text(), "qb_pwd": self.input_qb_pwd.text(),
             "qb_auto_add": self.chk_qb_add.isChecked(), "anonymous": self.cb_batch_anon.isChecked(), "parse_mode": parse_mode,
             "clean_keywords": [self.list_kw.item(i).text() for i in range(self.list_kw.count())] if hasattr(self, 'list_kw') else [],
@@ -646,6 +644,7 @@ class PTUploaderBase(QMainWindow):
                 self.input_img_email.setText(config_data.get("image_email", "")); self.input_img_pwd.setText(config_data.get("image_pwd", "")); self.input_img_token.setText(config_data.get("image_token", ""))
                 self.input_img_upload_url.setText(config_data.get("image_upload_api") or "https://img.momentpt.top/api/v1/upload")
                 self.input_img_token_url.setText(config_data.get("image_token_url") or "https://img.momentpt.top/api/v1/tokens")
+                if hasattr(self, 'spin_img_retry'): self.spin_img_retry.setValue(config_data.get("image_retry_count", 3))
                 self.spin_delay.setValue(config_data.get("seed_delay", 3)); self.input_qb_url.setText(config_data.get("qb_url") or "http://127.0.0.1:8080")
                 self.input_qb_user.setText(config_data.get("qb_user") or "admin"); self.input_qb_pwd.setText(config_data.get("qb_pwd", ""))
                 
@@ -751,7 +750,6 @@ class PTUploaderFullGUI(PTUploaderBase):
         self.init_directories()
         icon_path_win = os.path.join(self.base_dir, 'app_icon.ico'); icon_path_mac = os.path.join(self.base_dir, 'app_icon.icns')
         
-        # Mac环境下图标缺失：调用全局 Application 实例并注入 Dock 栏图标
         if os.path.exists(icon_path_win): 
             QApplication.instance().setWindowIcon(QIcon(icon_path_win))
             self.setWindowIcon(QIcon(icon_path_win))
@@ -1060,10 +1058,19 @@ class PTUploaderFullGUI(PTUploaderBase):
         fn.addRow("PT站域名:", self.input_pt_url); fn.addRow("账号 Cookie:", self.input_cookie); fn.addRow("API Key (选填):", self.input_api_key)
         b_pt = QPushButton("测试能否连通 PT 站"); b_pt.setStyleSheet("background-color: #007aff; color: white; border: none;"); b_pt.clicked.connect(self.test_pt_connection); fn.addRow("", b_pt)
         fn.addRow(self.get_hline())
+        
         self.input_img_upload_url = QLineEdit(); self.input_img_email = QLineEdit(); self.input_img_pwd = QLineEdit(echoMode=QLineEdit.EchoMode.Password); self.input_img_token = QLineEdit(echoMode=QLineEdit.EchoMode.Password); self.input_img_token_url = QLineEdit()
         fn.addRow("图床上传API:", self.input_img_upload_url); fn.addRow("验证 Token:", self.input_img_token); fn.addRow("获取 Token API:", self.input_img_token_url)
         fn.addRow("图床邮箱:", self.input_img_email); fn.addRow("图床密码:", self.input_img_pwd)
-        b_gt = QPushButton("向图床申请获取 Token"); b_gt.setStyleSheet("background-color: #34c759; color: white; border: none;"); b_gt.clicked.connect(self.get_image_token); fn.addRow("", b_gt)
+        
+        # 图床测试与Token获取区
+        b_gt = QPushButton("向图床申请获取 Token"); b_gt.setStyleSheet("background-color: #34c759; color: white; border: none;"); b_gt.clicked.connect(self.get_image_token)
+        b_test_img = QPushButton("测试图床连通性"); b_test_img.setStyleSheet("background-color: #007aff; color: white; border: none;"); b_test_img.clicked.connect(self.test_image_host_connection)
+        h_img_btns = QHBoxLayout(); h_img_btns.addWidget(b_gt); h_img_btns.addWidget(b_test_img); fn.addRow("", h_img_btns)
+        
+        # 增加上传重试控制控件
+        hr2 = QHBoxLayout(); hr2.addWidget(QLabel("图床上传失败时重试次数:")); self.spin_img_retry = QSpinBox(); self.spin_img_retry.setRange(1, 10); hr2.addWidget(self.spin_img_retry); hr2.addWidget(QLabel("次 (默认3次)")); hr2.addStretch(); fn.addRow("图床容错机制:", hr2)
+        
         hr = QHBoxLayout(); hr.addWidget(QLabel("自动发种时，两个种子间隔时间:")); self.spin_delay = QSpinBox(); self.spin_delay.setMaximum(9999); hr.addWidget(self.spin_delay); hr.addWidget(QLabel("秒 (默认3秒，为0时不限制)")); hr.addStretch(); fn.addRow("发种限流保护:", hr)
         gn.setLayout(fn); layout.addWidget(gn)
         ga = QGroupBox("⚙️ 防误抓拦截规则与自动化配置"); fa = QFormLayout(); fa.setSpacing(14)
@@ -1396,6 +1403,7 @@ class PTUploaderFullGUI(PTUploaderBase):
             
         self.log_cover(f"已为选中的 {len(sel)} 个文件夹重新分配了随机图库", "SUCCESS")
 
+    # 【修复核心】彻底重构了这里的批量生成逻辑，保证每次绘制前都能读取自身状态，杜绝最后一项串图的问题
     def cover_save_selected(self):
         save_dir = self.cover_save_dir.text().strip()
         if not save_dir or not os.path.exists(save_dir): return QMessageBox.warning(self, "提示", "请先在上方设置一个有效的封面输出目录！")
@@ -1408,21 +1416,13 @@ class PTUploaderFullGUI(PTUploaderBase):
         
         current_preview = getattr(self, 'current_preview_folder', None)
         
+        # 将当前显示在 UI 上的画布参数实时同步到状态字典中，防止改动丢失
         if current_preview:
             self.cover_states[current_preview] = self.lbl_preview.get_state()
             self.cover_assignments[current_preview] = self.lbl_preview.current_paths.copy()
         
         items_to_process = list(sel)
-        current_item_obj = None
-        for item in items_to_process:
-            if item.text() == current_preview:
-                current_item_obj = item
-                break
-                
-        if current_item_obj:
-            items_to_process.remove(current_item_obj)
-            items_to_process.append(current_item_obj) 
-
+        
         for i, item in enumerate(items_to_process):
             folder_path = item.text()
             folder_name = os.path.basename(folder_path)
@@ -1433,13 +1433,13 @@ class PTUploaderFullGUI(PTUploaderBase):
             paths = self.cover_assignments.get(folder_path)
             if not paths: continue
             
-            if folder_path != current_preview:
-                if folder_path in self.cover_states:
-                    self.lbl_preview.load_state(self.cover_states[folder_path])
-                else:
-                    self.lbl_preview.load_images(paths)
-                    self.cover_states[folder_path] = self.lbl_preview.get_state()
-                QApplication.processEvents()
+            # 不再跳过当前预览项，无差别强制挂载对应数据到画布，保证渲染准确
+            if folder_path in self.cover_states:
+                self.lbl_preview.load_state(self.cover_states[folder_path])
+            else:
+                self.lbl_preview.load_images(paths)
+                self.cover_states[folder_path] = self.lbl_preview.get_state()
+            QApplication.processEvents()
                 
             out_path = os.path.join(save_dir, f"{folder_name}.jpg")
             self.lbl_preview.render_to_file(out_path)
@@ -1447,6 +1447,7 @@ class PTUploaderFullGUI(PTUploaderBase):
             mc += 1
             self.cover_progress.setValue(int(((i + 1) / len(sel)) * 100))
             
+        # 批量导出结束后，安静地将界面恢复到一开始你正盯着的那张拼图
         if current_preview:
             if current_preview in self.cover_states:
                 self.lbl_preview.load_state(self.cover_states[current_preview])
@@ -1483,7 +1484,8 @@ class PTUploaderFullGUI(PTUploaderBase):
 
     def build_config_for_worker(self):
         return {
-            'pt_url': self.input_pt_url.text().strip() + ('/' if not self.input_pt_url.text().endswith('/') else ''), 'cookie': self.input_cookie.text().strip(), 'torrent_dir': self.get_abs_path(self.input_t_path.text()), 'seeding_dir': self.get_abs_path(self.input_s_path.text()), 'use_zip': self.cb_batch_zip.isChecked(), 'test_mode': self.cb_batch_test.isChecked(), 'anonymous': self.cb_batch_anon.isChecked(), 'category_map': {"写真": "401", "人像": "402", "风光": "403", "纪实": "404", "杂志": "405", "静物": "406", "儿童": "407", "超现实": "408", "美食": "409", "动物": "410", "人文": "411", "软件": "412", "图书": "413", "预设": "414", "教程": "415", "Special": "416"}, 'qb_url': self.input_qb_url.text().strip(), 'qb_user': self.input_qb_user.text().strip(), 'qb_pwd': self.input_qb_pwd.text().strip(), 'qb_category': self.input_qb_category.text().strip() if hasattr(self, 'input_qb_category') else "", 'qb_tags': self.input_qb_tags.text().strip() if hasattr(self, 'input_qb_tags') else "", 'add_to_qb': self.chk_qb_add.isChecked(), 'image_token': self.input_img_token.text().strip(), 'image_upload_api': self.input_img_upload_url.text().strip(), 'seed_delay': self.spin_delay.value()
+            'pt_url': self.input_pt_url.text().strip() + ('/' if not self.input_pt_url.text().endswith('/') else ''), 'cookie': self.input_cookie.text().strip(), 'torrent_dir': self.get_abs_path(self.input_t_path.text()), 'seeding_dir': self.get_abs_path(self.input_s_path.text()), 'use_zip': self.cb_batch_zip.isChecked(), 'test_mode': self.cb_batch_test.isChecked(), 'anonymous': self.cb_batch_anon.isChecked(), 'category_map': {"写真": "401", "人像": "402", "风光": "403", "纪实": "404", "杂志": "405", "静物": "406", "儿童": "407", "超现实": "408", "美食": "409", "动物": "410", "人文": "411", "软件": "412", "图书": "413", "预设": "414", "教程": "415", "Special": "416"}, 'qb_url': self.input_qb_url.text().strip(), 'qb_user': self.input_qb_user.text().strip(), 'qb_pwd': self.input_qb_pwd.text().strip(), 'qb_category': self.input_qb_category.text().strip() if hasattr(self, 'input_qb_category') else "", 'qb_tags': self.input_qb_tags.text().strip() if hasattr(self, 'input_qb_tags') else "", 'add_to_qb': self.chk_qb_add.isChecked(), 'image_token': self.input_img_token.text().strip(), 'image_upload_api': self.input_img_upload_url.text().strip(), 'seed_delay': self.spin_delay.value(),
+            'image_retry_count': self.spin_img_retry.value() if hasattr(self, 'spin_img_retry') else 3
         }
 
     def start_worker(self, mode):
@@ -1526,6 +1528,19 @@ class PTUploaderFullGUI(PTUploaderBase):
         except Exception as e: 
             self.log_msg(f"PT连通性测试失败: {e}", "ERROR")
             QMessageBox.critical(self, "错误", f"连接失败: {e}")
+
+    # 新增的测试图床连通性模块
+    def test_image_host_connection(self):
+        url = self.input_img_upload_url.text().strip()
+        if not url: return QMessageBox.warning(self, "警告", "请先填写图床上传API。")
+        self.log_msg(f"正在测试图床连通性: {url} ...")
+        try:
+            resp = requests.get(url, timeout=10)
+            self.log_msg(f"✅ 图床服务器连接成功！状态码: {resp.status_code}", "SUCCESS")
+            QMessageBox.information(self, "成功", f"图床服务器可正常访问！\n(响应状态码: {resp.status_code})")
+        except Exception as e:
+            self.log_msg(f"❌ 图床连接失败: {e}", "ERROR")
+            QMessageBox.critical(self, "错误", f"无法连接到图床服务器，请检查网络策略或代理设置！\n\n报错信息: {e}")
 
     def test_qb_connection(self):
         try:
