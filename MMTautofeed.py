@@ -1,4 +1,5 @@
-import sys, os, json, datetime, requests, zipfile, threading, shutil, subprocess, uuid, mimetypes, re, math
+import sys, os, json, datetime, requests, zipfile, subprocess, uuid, mimetypes, re, math, unicodedata
+from urllib.parse import urlparse, parse_qs, unquote
 
 if sys.platform == 'win32':
     try:
@@ -6,16 +7,19 @@ if sys.platform == 'win32':
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("mmt.autofeed.app.1_01_0")
     except Exception: pass
 elif sys.platform == 'darwin':
-    try:
-        from AppKit import NSBundle, NSApplication
-        bundle = NSBundle.mainBundle()
-        if bundle:
-            info = bundle.localizedInfoDictionary() or bundle.infoDictionary()
-            if info and 'CFBundleName' not in info: info['CFBundleName'] = 'MMTautofeed'
-        
-        app_instance = NSApplication.sharedApplication()
-        app_instance.setActivationPolicy_(0)
-    except ImportError: pass
+    # 只在“源码直接运行”时手动设置应用名/前台策略；
+    # 打包成 .app 后由 Info.plist 负责（提前创建 NSApplication 会导致 Dock 出现两个图标）。
+    if not getattr(sys, 'frozen', False):
+        try:
+            from AppKit import NSBundle, NSApplication
+            bundle = NSBundle.mainBundle()
+            if bundle:
+                info = bundle.localizedInfoDictionary() or bundle.infoDictionary()
+                if info and 'CFBundleName' not in info: info['CFBundleName'] = 'MMTautofeed'
+
+            app_instance = NSApplication.sharedApplication()
+            app_instance.setActivationPolicy_(0)
+        except ImportError: pass
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QGroupBox, QLabel, QComboBox, QPushButton, QTableWidget, QTableWidgetItem, QTextEdit, QLineEdit, QCheckBox, QScrollArea, QGridLayout, QFormLayout, QSpinBox, QHeaderView, QRadioButton, QButtonGroup, QMessageBox, QFileDialog, QDialog, QSizePolicy, QProgressBar, QListWidget, QAbstractItemView, QListView, QTreeView, QFrame, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsPathItem, QGraphicsItem, QSplitter)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QEvent, QTimer, QPointF, QRectF
@@ -27,6 +31,76 @@ STYLE_DARK = "QMainWindow, QDialog { background-color: #1e1e1e; color: #e5e5ea; 
 
 SITE_CATEGORIES = ["请选择分类...", "写真", "人像", "风光", "纪实", "杂志", "静物", "儿童", "超现实", "美食", "动物", "人文", "软件", "图书", "预设", "教程", "Special"]
 GLOBAL_TAGS = ["OTHER", "GER", "KR", "US", "UK", "FR", "JP", "CN", "大师", "明星", "杂志", "RAW", "可商用", "古风", "COSER", "私房", "马格南", "时光机", "樱花妹"]
+
+def resolve_category(category, category_map):
+    if not category: return None
+    cat = str(category).strip()
+    if not cat or cat == "请选择分类...": return None
+    return category_map.get(cat)
+
+def sanitize_filename(name, max_len=150):
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f\x7f]', '_', str(name))
+    name = name.rstrip(' .')
+    if len(name) > max_len: name = name[:max_len].rstrip(' .')
+    return name
+
+def build_bbcode_img(img_url, thumb_path, logger=None):
+    if img_url: return f"[img]{img_url}[/img]"
+    if logger: logger("图床未配置或上传失败，封面将显示占位提示。", "WARNING")
+    return "[img]图床未配置或上传失败[/img]"
+
+def extract_torrent_id(url):
+    if not url: return None
+    u = str(url)
+    try:
+        values = parse_qs(urlparse(u).query).get('id')
+    except Exception:
+        values = None
+    if values: return values[0]
+    # 成功回跳经常把详情页 URL 编码塞进 returnto 之类的参数里，
+    # 例如 login.php?returnto=details.php%3Fid%3D8864%26uploaded%3D1
+    decoded = unquote(u)
+    match = re.search(r'[?&]id=([^&\s]+)', decoded)
+    return match.group(1) if match else None
+
+def check_image_host_reachability(url, session=None, proxies=None):
+    session = session or requests
+    try:
+        resp = session.get(url, timeout=10, proxies=proxies)
+        return ("reachable", resp.status_code)
+    except Exception as e:
+        return ("unreachable", str(e))
+
+def normalize_proxy(addr):
+    addr = (addr or "").strip()
+    if not addr: return None
+    if "://" not in addr: addr = "http://" + addr
+    return {"http": addr, "https": addr}
+
+def find_existing_file(path):
+    # macOS 会把文件名做 NFD 归一化，用 NFC 构造的路径可能对不上；这里三种写法都试一遍。
+    for cand in (path, unicodedata.normalize('NFC', path), unicodedata.normalize('NFD', path)):
+        try:
+            if os.path.exists(cand): return cand
+        except Exception:
+            pass
+    return None
+
+def find_torrent_in_dir(directory, stem):
+    # 容错查找：忽略 Unicode 归一化差异与大小写，必要时按前缀匹配。
+    try:
+        target = unicodedata.normalize('NFC', stem).lower()
+        for f in os.listdir(directory):
+            n = unicodedata.normalize('NFC', f).lower()
+            if n in (target + '.torrent', target + '.zip.torrent'):
+                return os.path.join(directory, f)
+        for f in os.listdir(directory):
+            n = unicodedata.normalize('NFC', f).lower()
+            if n.endswith('.torrent') and (n.startswith(target) or target in n):
+                return os.path.join(directory, f)
+    except Exception:
+        pass
+    return None
 
 def get_rounded_poly(poly_pts, r):
     path = QPainterPath()
@@ -97,14 +171,14 @@ class CollageView(QGraphicsView):
     
     def __init__(self):
         super().__init__()
-        self.scene = QGraphicsScene(self); self.setScene(self.scene); self.scene.setSceneRect(0, 0, 1200, 1680)
+        self._scene = QGraphicsScene(self); self.setScene(self._scene); self._scene.setSceneRect(0, 0, 1200, 1680)
         self.setRenderHint(QPainter.RenderHint.Antialiasing); self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         self.setBackgroundBrush(QColor("#2c2c2e")); self.setMinimumSize(400, 560)
         self.setStyleSheet("border-radius: 8px; border: 2px solid #8e8e93;")
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff); self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
         
-        bg_rect = self.scene.addRect(0, 0, 1200, 1680, pen=QPen(Qt.PenStyle.NoPen), brush=QColor("#141414"))
+        bg_rect = self._scene.addRect(0, 0, 1200, 1680, pen=QPen(Qt.PenStyle.NoPen), brush=QColor("#141414"))
         bg_rect.setZValue(-1)
 
         polys = [
@@ -116,7 +190,7 @@ class CollageView(QGraphicsView):
         self.containers = []
         for poly in polys:
             path = get_rounded_poly(poly, 60)
-            container = ContainerItem(path); self.scene.addItem(container); self.containers.append(container)
+            container = ContainerItem(path); self._scene.addItem(container); self.containers.append(container)
             
         self.current_paths = ["", "", "", ""]; self.image_items = [None, None, None, None]
         self.bboxes = [(20,20,570,914), (460,20,720,810), (20,850,720,810), (610,750,570,910)]
@@ -160,7 +234,7 @@ class CollageView(QGraphicsView):
                 img_item.setZValue(0)
                 self.image_items[i] = img_item
                 
-        self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        self.fitInView(self._scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def load_images(self, paths):
         for img in self.image_items:
@@ -169,7 +243,7 @@ class CollageView(QGraphicsView):
                     if img.scene(): img.scene().removeItem(img)
                 except RuntimeError:
                     pass
-        self.current_paths = list(paths) + [""] * (4 - len(paths))
+        self.current_paths = (list(paths) + ["", "", "", ""])[:4]
         for i in range(4):
             path = self.current_paths[i]
             if path and os.path.exists(path):
@@ -183,12 +257,12 @@ class CollageView(QGraphicsView):
                 img_item.setScale(scale); cx, cy = self.centers[i]
                 img_item.setPos(cx - pixmap.width()/2, cy - pixmap.height()/2)
                 img_item.setZValue(0); self.image_items[i] = img_item
-        self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        self.fitInView(self._scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def replace_image(self, idx, path):
         if self.image_items[idx]:
             try:
-                if self.image_items[idx].scene(): self.scene.removeItem(self.image_items[idx])
+                if self.image_items[idx].scene(): self._scene.removeItem(self.image_items[idx])
             except RuntimeError:
                 pass
         self.current_paths[idx] = path; img = QImage(path)
@@ -201,6 +275,18 @@ class CollageView(QGraphicsView):
         img_item.setScale(scale); cx, cy = self.centers[idx]
         img_item.setPos(cx - pixmap.width()/2, cy - pixmap.height()/2)
         img_item.setZValue(0); self.image_items[idx] = img_item
+
+    def clear_images(self):
+        for img in self.image_items:
+            if img:
+                try:
+                    sc = img.scene()
+                    if sc: sc.removeItem(img)
+                except RuntimeError:
+                    pass
+        self.current_paths = ["", "", "", ""]
+        self.image_items = [None, None, None, None]
+        self.fitInView(self._scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def swap_images(self, idx1, idx2):
         path1 = self.current_paths[idx1]
@@ -218,12 +304,12 @@ class CollageView(QGraphicsView):
         else: super().wheelEvent(event)
 
     def render_to_file(self, filepath):
-        self.scene.clearSelection()
+        self._scene.clearSelection()
         img = QImage(1200, 1680, QImage.Format.Format_ARGB32); img.fill(QColor("#141414"))
         painter = QPainter(img); painter.setRenderHint(QPainter.RenderHint.Antialiasing); painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        self.scene.render(painter, target=QRectF(0,0,1200,1680), source=QRectF(0,0,1200,1680))
+        self._scene.render(painter, target=QRectF(0,0,1200,1680), source=QRectF(0,0,1200,1680))
         painter.end()
-        img.save(filepath, "JPG", 80) 
+        return img.save(filepath, "JPG", 80)
 
 class CheckableComboBox(QComboBox):
     def __init__(self, parent=None):
@@ -236,7 +322,8 @@ class CheckableComboBox(QComboBox):
                 item = self.model().itemFromIndex(index); item.setCheckState(Qt.CheckState.Unchecked if item.checkState() == Qt.CheckState.Checked else Qt.CheckState.Checked); self.updateText()
             return True
         return super().eventFilter(obj, event)
-    def set_items(self, items, checked_items=[]):
+    def set_items(self, items, checked_items=None):
+        if checked_items is None: checked_items = []
         self.clear()
         for text in items:
             item = QStandardItem(text); item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled); item.setCheckState(Qt.CheckState.Checked if text in checked_items else Qt.CheckState.Unchecked); self.model().appendRow(item)
@@ -251,8 +338,9 @@ class BatchWorkerThread(QThread):
         self.tag_id_map = {"禁转": "1", "官方": "3", "大师": "8", "时光机": "11", "CN": "15", "JP": "16", "FR": "17", "UK": "18", "私房": "19", "COSER": "20", "US": "21", "KR": "22", "GER": "23", "古风": "24", "可商用": "25", "RAW": "26", "杂志": "27", "OTHER": "28", "马格南": "29", "明星": "30", "樱花妹": "31"}
     def stop(self): self.is_running = False
     def emit_log(self, msg, level="INFO"): self.log_signal.emit(msg, level)
+    def _proxies(self): return normalize_proxy(self.config.get('proxy_addr')) if self.config.get('use_proxy') else None
     def run(self):
-        total_tasks = len(self.tasks); success_count = 0
+        total_tasks = len(self.tasks); success_count = 0; sim_count = 0
         if total_tasks == 0: self.finished_signal.emit(0, 0); return
         try: import torf
         except ImportError: self.emit_log("【环境报错】未安装 torf 库！请执行: pip install torf", "ERROR"); self.finished_signal.emit(0, total_tasks); return
@@ -263,7 +351,7 @@ class BatchWorkerThread(QThread):
         if self.mode in ['publish', 'auto'] and not self._tags_fetched:
             self.emit_log("🌐 [网络阶段] 尝试抓取站点最新标签库...", "INFO")
             try:
-                tu_resp = requests.get(upload_form_url, headers={"Cookie": self.config['cookie']}, timeout=15)
+                tu_resp = requests.get(upload_form_url, headers={"Cookie": self.config['cookie']}, timeout=15, proxies=self._proxies())
                 matches = re.findall(r'name="tags\[\d+\]\[\]"\s+value="(\d+)"\s*/>([^<]+)</label>', tu_resp.text, re.I); d_map = {name.strip(): val for val, name in matches if val.isdigit() and name}
                 if d_map: self.tag_id_map.update(d_map); self.emit_log(f"✅ 标签同步成功({len(self.tag_id_map)})", "SUCCESS")
                 else: self.emit_log("⚠️ 抓取标签失败，启用内置密码本！", "WARNING")
@@ -279,20 +367,33 @@ class BatchWorkerThread(QThread):
                 if not os.path.exists(folder_path): self.cell_update_signal.emit(row, 9, "❌ 路径失效", "#ff3b30"); set_p(100); continue
                 self.cell_update_signal.emit(row, 9, "制作中...", "#ff9500")
                 try:
+                    reuse = self.config.get('reuse_existing', False)
                     target_path = folder_path
-                    if use_zip:
-                        set_p(15); zip_name = f"{std_name}.zip"; zip_path = os.path.join(seeding_dir, zip_name); self.emit_log(f"📦 [文件打包] 制作极速零压缩封包 ZIP: {zip_name} ...", "INFO")
-                        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as zipf:
-                            for root, _, files in os.walk(folder_path):
-                                for f in files:
-                                    if not self.is_running: raise InterruptedError()
-                                    zipf.write(os.path.join(root, f), os.path.relpath(os.path.join(root, f), os.path.join(folder_path, '..')))
-                        target_path = zip_path; self.emit_log(f"✅ ZIP 打包完毕！", "SUCCESS")
-                    set_p(35); self.emit_log(f"⚙️ [种子生成] 计算哈希...", "INFO")
-                    t = torf.Torrent(path=target_path, trackers=[announce_url], private=True); t.generate()
-                    out_file = os.path.join(local_torrent_dir, f"{std_name}{'.zip' if use_zip else ''}.torrent"); t.write(out_file)
-                    self.cell_update_signal.emit(row, 9, "✅ 已制种", "#34c759")
-                    if self.mode == 'make': success_count += 1
+                    zip_path = os.path.join(seeding_dir, f"{sanitize_filename(std_name)}.zip") if use_zip else None
+                    out_file = os.path.join(local_torrent_dir, f"{sanitize_filename(std_name)}{'.zip' if use_zip else ''}.torrent")
+                    if reuse and find_existing_file(out_file):
+                        out_file = find_existing_file(out_file)
+                        self.emit_log(f"♻️ 复用已存在的种子，跳过重新生成: {os.path.basename(out_file)}", "INFO")
+                        self.cell_update_signal.emit(row, 9, "✅ 已制种(复用)", "#34c759")
+                        if self.mode == 'make': success_count += 1
+                    else:
+                        if use_zip:
+                            if reuse and find_existing_file(zip_path):
+                                zip_path = find_existing_file(zip_path); target_path = zip_path; self.emit_log(f"♻️ 复用已存在的 ZIP: {os.path.basename(zip_path)}", "INFO")
+                            else:
+                                set_p(15); zip_name = os.path.basename(zip_path); self.emit_log(f"📦 [文件打包] 制作极速零压缩封包 ZIP: {zip_name} ...", "INFO")
+                                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as zipf:
+                                    for root, _, files in os.walk(folder_path):
+                                        for f in files:
+                                            if not self.is_running: raise InterruptedError()
+                                            zipf.write(os.path.join(root, f), os.path.relpath(os.path.join(root, f), os.path.join(folder_path, '..')))
+                                target_path = zip_path; self.emit_log(f"✅ ZIP 打包完毕！", "SUCCESS")
+                        set_p(35); self.emit_log(f"⚙️ [种子生成] 计算哈希...", "INFO")
+                        t = torf.Torrent(path=target_path, trackers=[announce_url], private=True); t.generate()
+                        if find_existing_file(out_file): out_file = find_existing_file(out_file); self.emit_log(f"♻️ 已存在同名种子，覆盖重新生成: {os.path.basename(out_file)}", "WARNING")
+                        t.write(out_file, overwrite=True)
+                        self.cell_update_signal.emit(row, 9, "✅ 已制种", "#34c759")
+                        if self.mode == 'make': success_count += 1
                 except Exception as e:
                     self.cell_update_signal.emit(row, 9, "❌ 生成失败", "#ff3b30"); self.emit_log(f"制种出错: {e}", "ERROR"); set_p(100); continue
                 set_p(50 if self.mode == 'auto' else 100)
@@ -314,7 +415,7 @@ class BatchWorkerThread(QThread):
                                     if raw_token:
                                         if raw_token.lower().startswith('bearer '): raw_token = raw_token[7:].strip()
                                         headers["Authorization"] = f"Bearer {raw_token}"
-                                    img_res = requests.post(self.config['image_upload_api'], headers=headers, files=files, timeout=120)
+                                    img_res = requests.post(self.config['image_upload_api'], headers=headers, files=files, timeout=120, proxies=self._proxies())
                                 if img_res.status_code in [200, 201]:
                                     try:
                                         img_data = img_res.json()
@@ -328,9 +429,13 @@ class BatchWorkerThread(QThread):
                                 if retry == retry_limit - 1: raise
                     except Exception as e: self.emit_log(f"❌ 图床通讯失败: {e}", "ERROR")
                 set_p(65 if self.mode == 'auto' else 30)
-                cat_id = self.config['category_map'].get(task['category'], "401"); mode_4_cats = ["401", "402", "403", "404", "416", "415", "414", "413", "412", "411", "405"]
+                cat_id = resolve_category(task.get('category'), self.config['category_map'])
+                if cat_id is None:
+                    self.cell_update_signal.emit(row, 10, "❌ 未选择分类", "#ff3b30")
+                    self.emit_log(f"❌ [拦截] 未选择有效分类，已跳过: {std_name}", "ERROR"); set_p(100); continue
+                mode_4_cats = ["401", "402", "403", "404", "416", "415", "414", "413", "412", "411", "405"]
                 cat_mode = "4" if cat_id in mode_4_cats else "5"; tag_param_name = f"tags[{cat_mode}][]"
-                bbcode_img = f"[img]{img_url}[/img]" if img_url else (f"[img]{task['thumb_path']}[/img]" if task['thumb_path'] and "http" in str(task['thumb_path']) else "[img]图床未配置或上传失败[/img]")
+                bbcode_img = build_bbcode_img(img_url, task['thumb_path'], self.emit_log)
                 disclaimer = "\n\n[quote]本站不是一个以盈利为目的的站点，所有资源均来自本人购买实体摄影集拍摄和网上搜集而来，任何涉及商业或盈利目的均不可使用本站资源，否则后果自负，本站将不对本站的任何内容负任何法律责任!所有下载内容仅供测试宽带使用，测试后请立即删除。如您下载本站任何资源，即代表您接受本声明及条款。本站支持正版，请购买正版!如版权持有人发现本站有任何侵犯版权持有人权益的资源，请通知本站管理人员予以删除![/quote]"
                 full_descr = f"{task['intro']}\n\n{bbcode_img}{disclaimer}"; data_payload = {"name": std_name, "type": cat_id, "descr": full_descr}
                 if self.config.get('anonymous', True): data_payload['uplver'] = 'yes'
@@ -341,27 +446,56 @@ class BatchWorkerThread(QThread):
                     else: post_data.append((tag_param_name, t_name)); self.emit_log(f"   -> ⚠️ 未找到标签 [{t_name}] 的 ID", "WARNING")
                 if self.config['test_mode']:
                     self.emit_log(f"【测试模式】发种拦截！\n📌 最终标题: {std_name}\n📂 分类ID: {cat_id}\n🔖 标签参数: {tag_param_name}\n🏷️ 真实标签: {final_tags}\n📝 组装简介:\n------------------\n{full_descr}\n------------------", "INFO")
-                    self.cell_update_signal.emit(row, 10, "✅ 模拟完毕", "#34c759"); success_count += 1; set_p(100); continue
-                torrent_path = os.path.join(local_torrent_dir, f"{std_name}.torrent")
-                if not os.path.exists(torrent_path): torrent_path = os.path.join(local_torrent_dir, f"{std_name}.zip.torrent")
-                if not os.path.exists(torrent_path): self.cell_update_signal.emit(row, 10, "❌ 未制作种子", "#ff3b30"); set_p(100); continue
+                    self.cell_update_signal.emit(row, 10, "✅ 模拟完毕", "#34c759"); sim_count += 1; set_p(100); continue
+                stem = sanitize_filename(std_name)
+                torrent_path = find_existing_file(os.path.join(local_torrent_dir, f"{stem}.torrent")) or find_existing_file(os.path.join(local_torrent_dir, f"{stem}.zip.torrent"))
+                if not torrent_path: torrent_path = find_torrent_in_dir(local_torrent_dir, stem)
+                if torrent_path:
+                    self.emit_log(f"🔎 命中本地种子: {os.path.basename(torrent_path)}", "INFO")
+                else:
+                    # 兼容 macOS 等场景：种子文件缺失但封包/源文件夹仍在时，现场补做种子
+                    self.emit_log(f"⚠️ 未找到本地种子，尝试现场补做...（目录: {local_torrent_dir}）", "WARNING")
+                    try:
+                        src = None
+                        if use_zip:
+                            src = find_existing_file(os.path.join(seeding_dir, f"{stem}.zip"))
+                            if not src and os.path.isdir(folder_path):
+                                src = os.path.join(seeding_dir, f"{stem}.zip")
+                                with zipfile.ZipFile(src, 'w', zipfile.ZIP_STORED) as zipf:
+                                    for root, _, files in os.walk(folder_path):
+                                        for f in files:
+                                            zipf.write(os.path.join(root, f), os.path.relpath(os.path.join(root, f), os.path.join(folder_path, '..')))
+                                self.emit_log(f"✅ 现场补做 ZIP 成功: {os.path.basename(src)}", "SUCCESS")
+                        elif os.path.isdir(folder_path): src = folder_path
+                        if src:
+                            t = torf.Torrent(path=src, trackers=[announce_url], private=True); t.generate()
+                            torrent_path = os.path.join(local_torrent_dir, f"{stem}{'.zip' if use_zip else ''}.torrent")
+                            t.write(torrent_path, overwrite=True)
+                            self.emit_log(f"✅ 现场补做种子成功: {os.path.basename(torrent_path)}", "SUCCESS")
+                    except Exception as e:
+                        self.emit_log(f"现场补做种子失败: {e}", "ERROR")
+                if not torrent_path or not os.path.exists(torrent_path):
+                    self.cell_update_signal.emit(row, 10, "❌ 未制作种子", "#ff3b30")
+                    try: listing = os.listdir(local_torrent_dir)[:8]
+                    except Exception: listing = []
+                    self.emit_log(f"❌ 未找到种子文件: {stem}(.zip).torrent | 目录内文件: {listing}", "ERROR"); set_p(100); continue
                 self.cell_update_signal.emit(row, 10, "🚀 推送中...", "#ff9500"); set_p(80 if self.mode == 'auto' else 60)
                 try:
                     self.emit_log(f"🌐 [网络推送] 发送表单数据...", "INFO")
                     with open(torrent_path, "rb") as file_stream:
                         files = {'file': (os.path.basename(torrent_path), file_stream, 'application/x-bittorrent')}
-                        headers = {"User-Agent": "MMTautofeed-Client/v1.03", "Cookie": self.config['cookie']}
-                        resp = requests.post(upload_submit_url, headers=headers, data=post_data, files=files, timeout=25, allow_redirects=True)
-                    match = re.search(r'id(?:=|%3D)(\d+)', resp.url)
-                    if resp.status_code in [200, 302] and match:
-                        torrent_id = match.group(1); self.cell_update_signal.emit(row, 10, "✅ 发布成功", "#34c759"); self.emit_log(f"🎉【发布成功】种子ID: {torrent_id}", "SUCCESS")
+                        headers = {"User-Agent": "MMTautofeed-Client/V1.00.0", "Cookie": self.config['cookie']}
+                        resp = requests.post(upload_submit_url, headers=headers, data=post_data, files=files, timeout=25, allow_redirects=True, proxies=self._proxies())
+                    torrent_id = extract_torrent_id(resp.url)
+                    if resp.status_code in [200, 302] and torrent_id:
+                        self.cell_update_signal.emit(row, 10, "✅ 发布成功", "#34c759"); self.emit_log(f"🎉【发布成功】种子ID: {torrent_id} | 最终URL: {resp.url}", "SUCCESS")
                         success_count += 1; set_p(90 if self.mode == 'auto' else 80)
                         if self.config['add_to_qb']:
                             dl_url = f"{self.config['pt_url']}download.php?id={torrent_id}"; self.emit_log(f"📥 [种子拉取] 请求带 Passkey 的种子...", "INFO")
                             final_torrent_path = torrent_path
                             for dl_retry in range(3):
                                 try:
-                                    dl_resp = requests.get(dl_url, headers=headers, timeout=30)
+                                    dl_resp = requests.get(dl_url, headers=headers, timeout=30, proxies=self._proxies())
                                     if dl_resp.status_code == 200 and len(dl_resp.content) > 100:
                                         final_torrent_path = os.path.join(pt_torrent_dir, f"[PT]{std_name}.torrent")
                                         with open(final_torrent_path, "wb") as tf: tf.write(dl_resp.content)
@@ -381,7 +515,10 @@ class BatchWorkerThread(QThread):
                                 self.emit_log(f"📡 [qB做种] 成功推送到 qBittorrent！\n   -> 挂载路径: {save_dir}", "SUCCESS")
                             except Exception as e: self.emit_log(f"⚠️ qB 无法连接: {e}", "WARNING")
                     else:
-                        if 'login.php' in resp.url and not match: self.cell_update_signal.emit(row, 10, "❌ Cookie失效", "#ff3b30"); self.emit_log(f"🚨 重定向至登录页，Cookie失效！", "ERROR")
+                        self.emit_log(f"🔎 发种响应: HTTP {resp.status_code} | 最终URL: {resp.url}", "INFO")
+                        if 'login.php' in resp.url and not torrent_id:
+                            self.cell_update_signal.emit(row, 10, "❌ Cookie失效", "#ff3b30")
+                            self.emit_log(f"🚨 重定向至登录页，Cookie失效！请在【偏好设置】中重新粘贴浏览器里完整的 Cookie（需包含用户身份项，如 c_secure_uid 和 c_secure_pass）。", "ERROR")
                         else: self.cell_update_signal.emit(row, 10, f"⚠️ 频控或异常", "#ff3b30"); self.emit_log(f"🚨 页面未返回有效的种子 ID。", "ERROR")
                 except Exception as e: self.cell_update_signal.emit(row, 10, "断网/超时", "#ff3b30"); self.emit_log(f"网络连接断开: {e}", "ERROR")
                 set_p(100)
@@ -390,6 +527,7 @@ class BatchWorkerThread(QThread):
                 for wait_sec in range(delay_sec, 0, -1):
                     if not self.is_running: break
                     self.emit_log(f"⏳ 倒计时: {wait_sec} 秒", "INFO"); QThread.msleep(1000) 
+        if sim_count > 0: self.emit_log(f"🧪 测试模式：共模拟 {sim_count} 项，未实际发布任何种子。", "INFO")
         self.progress_signal.emit(100); self.finished_signal.emit(success_count, total_tasks)
 
 class AddPresetDialog(QDialog):
@@ -447,7 +585,9 @@ class ManagePresetsDialog(QDialog):
             if not nd["name"]: return
             self.parent_win.presets_data[row] = nd; self.parent_win.save_presets(); self.refresh_table(); self.parent_win.refresh_main_preset_combo(); self.parent_win.preset_font_size = dialog.get_font_size(); self.parent_win.save_config(silent=True)
     def copy_preset(self, row):
-        new_data = self.parent_win.presets_data[row].copy(); new_data["name"] = new_data["name"] + "-副本"; self.parent_win.presets_data.append(new_data)
+        src = self.parent_win.presets_data[row] if 0 <= row < len(self.parent_win.presets_data) else None
+        if not isinstance(src, dict): self.parent_win.log_msg("❌ 复制失败：预设数据无效", "ERROR"); return
+        new_data = src.copy(); new_data["name"] = (new_data.get("name") or "未命名预设") + "-副本"; self.parent_win.presets_data.append(new_data)
         self.parent_win.save_presets(); self.refresh_table(); self.parent_win.refresh_main_preset_combo(); self.parent_win.log_msg(f"已成功复制生成预设副本：{new_data['name']}", "SUCCESS")
     def refresh_table(self):
         self.table.setRowCount(0)
@@ -549,7 +689,7 @@ class RuleWidget(QWidget):
 class PTUploaderBase(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MMTautofeed批量发种工具 v1.03.6 (带名称解析引擎)")
+        self.setWindowTitle("MMTautofeed批量发种工具 V1.00.0 (带名称解析引擎)")
         self.resize(1300, 880) 
         self.current_theme = "light"; self.hint_labels = []; self.presets_data = []; self.clean_keywords = []; self.clean_exts = []; self.preset_font_size = 10; self.base_dir = ""; self.last_dir = ""
         self.custom_rules = []
@@ -564,7 +704,18 @@ class PTUploaderBase(QMainWindow):
             else: self.base_dir = os.path.dirname(sys.executable)
         else: self.base_dir = os.path.dirname(os.path.abspath(__file__))
         self.last_dir = self.base_dir
-        os.makedirs(os.path.join(self.base_dir, 'logs'), exist_ok=True)
+        os.makedirs(os.path.join(self.get_data_dir(), 'logs'), exist_ok=True)
+
+    def get_data_dir(self):
+        if getattr(sys, 'frozen', False):
+            if sys.platform == 'darwin':
+                data_dir = os.path.join(os.path.expanduser('~'), 'Library', 'Application Support', 'MMTautofeed')
+            else:
+                data_dir = os.path.dirname(sys.executable)
+        else:
+            data_dir = os.path.dirname(os.path.abspath(__file__))
+        os.makedirs(data_dir, exist_ok=True)
+        return data_dir
 
     def log_msg(self, msg, level="INFO"):
         time_str = datetime.datetime.now().strftime("%H:%M:%S")
@@ -575,12 +726,12 @@ class PTUploaderBase(QMainWindow):
             self.batch_log.append(log_line); self.batch_log.verticalScrollBar().setValue(self.batch_log.verticalScrollBar().maximum())
         QApplication.processEvents()
         try:
-            log_file = os.path.join(self.base_dir, 'logs', f"mmtauto_{datetime.datetime.now().strftime('%Y%m%d')}.log")
+            log_file = os.path.join(self.get_data_dir(), 'logs', f"mmtauto_{datetime.datetime.now().strftime('%Y%m%d')}.log")
             with open(log_file, 'a', encoding='utf-8') as f: f.write(log_line + '\n')
         except Exception: pass
 
     def load_presets(self):
-        preset_file = os.path.join(self.base_dir, 'presets.json')
+        preset_file = os.path.join(self.get_data_dir(), 'presets.json')
         if os.path.exists(preset_file):
             try:
                 with open(preset_file, 'r', encoding='utf-8') as f: self.presets_data = json.load(f)
@@ -588,7 +739,7 @@ class PTUploaderBase(QMainWindow):
 
     def save_presets(self):
         try:
-            with open(os.path.join(self.base_dir, 'presets.json'), 'w', encoding='utf-8') as f: json.dump(self.presets_data, f, indent=4, ensure_ascii=False)
+            with open(os.path.join(self.get_data_dir(), 'presets.json'), 'w', encoding='utf-8') as f: json.dump(self.presets_data, f, indent=4, ensure_ascii=False)
         except Exception as e: self.log_msg(f"写入预设文件异常: {e}", "ERROR")
 
     def apply_theme(self, theme_mode):
@@ -624,16 +775,19 @@ class PTUploaderBase(QMainWindow):
             "clean_exts": [self.list_ext.item(i).text() for i in range(self.list_ext.count())] if hasattr(self, 'list_ext') else [],
             "preset_font_size": self.preset_font_size,
             "custom_rules": self.custom_rules,
+            "reuse_existing": self.chk_reuse_existing.isChecked() if hasattr(self, 'chk_reuse_existing') else False,
+            "use_proxy": self.chk_proxy.isChecked() if hasattr(self, 'chk_proxy') else False,
+            "proxy_addr": self.input_proxy.text().strip() if hasattr(self, 'input_proxy') else "127.0.0.1:7897",
             "qb_category": self.input_qb_category.text() if hasattr(self, 'input_qb_category') else "",
             "qb_tags": self.input_qb_tags.text() if hasattr(self, 'input_qb_tags') else ""
         }
         try:
-            with open(os.path.join(self.base_dir, 'config.json'), 'w', encoding='utf-8') as f: json.dump(config_data, f, indent=4, ensure_ascii=False)
+            with open(os.path.join(self.get_data_dir(), 'config.json'), 'w', encoding='utf-8') as f: json.dump(config_data, f, indent=4, ensure_ascii=False)
             if not silent: QMessageBox.information(self, "操作成功", "设置已保存！"); self.log_msg("偏好设置保存成功", "SUCCESS")
         except Exception as e: self.log_msg(f"配置保存失败: {e}", "ERROR")
 
     def load_config(self):
-        config_file = os.path.join(self.base_dir, 'config.json')
+        config_file = os.path.join(self.get_data_dir(), 'config.json')
         if os.path.exists(config_file):
             try:
                 with open(config_file, 'r', encoding='utf-8') as f: config_data = json.load(f)
@@ -652,6 +806,9 @@ class PTUploaderBase(QMainWindow):
                 if hasattr(self, 'input_qb_tags'): self.input_qb_tags.setText(config_data.get("qb_tags", ""))
 
                 self.chk_qb_add.setChecked(config_data.get("qb_auto_add", True)); self.cb_batch_anon.setChecked(config_data.get("anonymous", True))
+                if hasattr(self, 'chk_reuse_existing'): self.chk_reuse_existing.setChecked(config_data.get("reuse_existing", False))
+                if hasattr(self, 'chk_proxy'): self.chk_proxy.setChecked(config_data.get("use_proxy", False))
+                if hasattr(self, 'input_proxy'): self.input_proxy.setText(config_data.get("proxy_addr") or "127.0.0.1:7897")
                 p_mode = config_data.get("parse_mode", "simple")
                 if p_mode == "none": self.rb_none.setChecked(True)
                 elif p_mode == "full": self.rb_full.setChecked(True)
@@ -671,6 +828,9 @@ class PTUploaderBase(QMainWindow):
             self.apply_theme("light"); self.input_pt_url.setText("https://www.momentpt.top/"); self.input_img_upload_url.setText("https://img.momentpt.top/api/v1/upload"); self.input_img_token_url.setText("https://img.momentpt.top/api/v1/tokens")
             self.input_t_path.setText("./torrents"); self.input_s_path.setText("./seeding"); self.spin_delay.setValue(3); self.input_qb_url.setText("http://127.0.0.1:8080"); self.input_qb_user.setText("admin")
             self.chk_qb_add.setChecked(True); self.rb_simple.setChecked(True); self.preset_font_size = 10
+            if hasattr(self, 'chk_reuse_existing'): self.chk_reuse_existing.setChecked(False)
+            if hasattr(self, 'chk_proxy'): self.chk_proxy.setChecked(False)
+            if hasattr(self, 'input_proxy'): self.input_proxy.setText("127.0.0.1:7897")
             self.custom_rules = []
             if hasattr(self, 'input_qb_category'): self.input_qb_category.setText("")
             if hasattr(self, 'input_qb_tags'): self.input_qb_tags.setText("")
@@ -740,22 +900,29 @@ class PTUploaderBase(QMainWindow):
             
             parts = [f"『{raw_title}』" if raw_title else "", p_m, p_p, year, amount_str, "Moment"]
             std_name = "-".join([x for x in parts if x])
-            # 防止Mac/Windows下含有特殊符号（如斜杠/）破坏Zip生成的路径结构
-            std_name = std_name.replace("/", "_").replace("\\", "_").replace(":", "_")
             
+        # 防止Mac/Windows下含有特殊符号（如斜杠/）破坏Zip/种子生成的路径结构（两种解析模式都生效）
+        std_name = sanitize_filename(std_name)
         return std_name, year
+
+    def find_preset(self, name):
+        return next((p for p in self.presets_data if isinstance(p, dict) and p.get("name") == name), {})
 
 class PTUploaderFullGUI(PTUploaderBase):
     def init_all(self):
         self.init_directories()
-        icon_path_win = os.path.join(self.base_dir, 'app_icon.ico'); icon_path_mac = os.path.join(self.base_dir, 'app_icon.icns')
-        
-        if os.path.exists(icon_path_win): 
-            QApplication.instance().setWindowIcon(QIcon(icon_path_win))
-            self.setWindowIcon(QIcon(icon_path_win))
-        elif os.path.exists(icon_path_mac): 
-            QApplication.instance().setWindowIcon(QIcon(icon_path_mac))
-            self.setWindowIcon(QIcon(icon_path_mac))
+        meipass = getattr(sys, '_MEIPASS', self.base_dir)
+        icon_candidates = [
+            os.path.join(self.base_dir, 'app_icon.ico'), os.path.join(self.base_dir, 'app_icon.icns'),
+            os.path.join(meipass, 'app_icon.ico'), os.path.join(meipass, 'app_icon.icns'),
+            os.path.join(self.base_dir, 'Contents', 'Resources', 'app_icon.icns'),
+            os.path.join(os.path.dirname(sys.executable), 'app_icon.ico'),
+            os.path.join(os.path.dirname(sys.executable), 'app_icon.icns'),
+        ]
+        icon_path = next((p for p in icon_candidates if os.path.exists(p)), None)
+        if icon_path:
+            QApplication.instance().setWindowIcon(QIcon(icon_path))
+            self.setWindowIcon(QIcon(icon_path))
             
         self.load_presets()
         
@@ -779,12 +946,23 @@ class PTUploaderFullGUI(PTUploaderBase):
         self.setup_cover_tab()
         self.setup_settings_tab()
         self.load_config()
+        self.ensure_data_dirs()
         self.log_msg(f"✅ GUI 界面渲染完成，大一统核心引擎已全面就绪！", "SUCCESS")
+
+    def ensure_data_dirs(self):
+        for le in (getattr(self, 'input_t_path', None), getattr(self, 'input_s_path', None)):
+            if le is None: continue
+            try:
+                p = self.get_abs_path(le.text())
+                os.makedirs(p, exist_ok=True)
+                if not os.access(p, os.W_OK): self.log_msg(f"⚠️ 目录不可写，请更换: {p}", "WARNING")
+            except Exception as e:
+                self.log_msg(f"⚠️ 无法创建/访问目录: {getattr(le, 'text', lambda: '?')()} -> {e}", "ERROR")
 
     def setup_log_tab(self):
         layout = QVBoxLayout(self.tab_log); group_log = QGroupBox("🖥️ 实时运行日志"); v_log = QVBoxLayout(); self.log_view = QTextEdit(); self.log_view.setObjectName("LogView"); self.log_view.setReadOnly(True)
         h_tool = QHBoxLayout(); h_tool.addWidget(QLabel("📌 记录程序详细工作状态、接口返回值和异常报错。")); h_tool.addStretch()
-        btn_open_dir = QPushButton("📂 打开日志文件夹"); btn_open_dir.clicked.connect(lambda: os.startfile(os.path.join(self.base_dir, 'logs')) if sys.platform == 'win32' else subprocess.Popen(['open' if sys.platform == 'darwin' else 'xdg-open', os.path.join(self.base_dir, 'logs')]))
+        btn_open_dir = QPushButton("📂 打开日志文件夹"); btn_open_dir.clicked.connect(lambda: os.startfile(os.path.join(self.get_data_dir(), 'logs')) if sys.platform == 'win32' else subprocess.Popen(['open' if sys.platform == 'darwin' else 'xdg-open', os.path.join(self.get_data_dir(), 'logs')]))
         btn_clear = QPushButton("🗑 清空当前面板"); btn_clear.setStyleSheet("background-color: #ff3b30; color: white; border: none;"); btn_clear.clicked.connect(self.log_view.clear)
         h_tool.addWidget(btn_open_dir); h_tool.addWidget(btn_clear); v_log.addLayout(h_tool); v_log.addWidget(self.log_view); group_log.setLayout(v_log); layout.addWidget(group_log)
 
@@ -801,56 +979,103 @@ class PTUploaderFullGUI(PTUploaderBase):
     def setup_batch_upload_tab(self):
         layout = QVBoxLayout(self.tab_batch)
         group_top = QGroupBox("第一步：选择发布预设与基础设定"); h_top = QHBoxLayout()
-        self.preset_combo = QComboBox(); self.preset_combo.currentIndexChanged.connect(self.preset_changed); self.preset_combo.setMinimumWidth(200); h_top.addWidget(QLabel("发布预设:")); h_top.addWidget(self.preset_combo)
-        btn_m = QPushButton("⚙ 管理预设"); btn_m.clicked.connect(self.open_manage_presets); h_top.addWidget(btn_m)
-        btn_r = QPushButton("刷新"); btn_r.clicked.connect(self.refresh_main_preset_combo); h_top.addWidget(btn_r); h_top.addStretch()
-        self.cb_batch_anon = QCheckBox("匿名上传"); self.cb_batch_anon.setChecked(True); self.cb_batch_zip = QCheckBox("打包为ZIP格式"); self.cb_batch_zip.setChecked(True); self.cb_batch_test = QCheckBox("仅测试(不发送)")
+        self.preset_combo = QComboBox(); self.preset_combo.currentIndexChanged.connect(self.preset_changed); self.preset_combo.setMinimumWidth(240); self.preset_combo.setToolTip("选择一个“模板”，它决定了标题里的摄影/模特、简介、默认分类和标签。")
+        h_top.addWidget(QLabel("发布预设:")); h_top.addWidget(self.preset_combo)
+        btn_m = QPushButton("⚙ 管理预设"); btn_m.setToolTip("新增 / 编辑 / 删除预设模板。"); btn_m.clicked.connect(self.open_manage_presets); h_top.addWidget(btn_m)
+        btn_r = QPushButton("刷新"); btn_r.setToolTip("重新读取预设列表。"); btn_r.clicked.connect(self.refresh_main_preset_combo); h_top.addWidget(btn_r); h_top.addStretch()
+        self.cb_batch_anon = QCheckBox("匿名上传"); self.cb_batch_anon.setChecked(True); self.cb_batch_anon.setToolTip("发布时不显示发布者，推荐勾选。")
+        self.cb_batch_zip = QCheckBox("打包为ZIP"); self.cb_batch_zip.setChecked(True); self.cb_batch_zip.setToolTip("把每个资源文件夹压成一个 ZIP 再制作种子；推荐勾选，方便做种和下载。")
+        self.cb_batch_test = QCheckBox("仅测试(不发到PT)"); self.cb_batch_test.setToolTip("只演练整个流程、检查标题/分类/标签，不会真的发到 PT 站，也不会推送 qB。")
         h_top.addWidget(self.cb_batch_anon); h_top.addWidget(self.cb_batch_zip); h_top.addWidget(self.cb_batch_test)
-        v_top = QVBoxLayout(); v_top.addLayout(h_top); self.preset_info_label = QTextEdit(); self.preset_info_label.setFixedHeight(80); self.preset_info_label.setReadOnly(True); v_top.addWidget(self.preset_info_label); group_top.setLayout(v_top); layout.addWidget(group_top, 0)
+        v_top = QVBoxLayout(); v_top.addLayout(h_top)
+        v_top.addWidget(self.create_hint_label("💡 这里决定“默认模板”和基本选项：先在【发布预设】里选好模板；需要新模板就点【⚙ 管理预设】。下面灰框会显示当前预设的摄影/模特/分类/标签，方便你核对。", "primary"))
+        self.preset_info_label = QTextEdit(); self.preset_info_label.setFixedHeight(80); self.preset_info_label.setReadOnly(True); self.preset_info_label.setToolTip("当前所选预设的详情预览。")
+        v_top.addWidget(self.preset_info_label); group_top.setLayout(v_top); layout.addWidget(group_top, 0)
 
-        group_mid = QGroupBox("第二步：装载文件夹与提取信息"); v_mid = QVBoxLayout()
-        lbl_hint_step2 = QLabel("💡 操作指南：点击【添加文件夹】批量导入资源；选中列表中的某一行，点击【➖ 移除选中行】可删除该项。\n如果智能提取的标题或参数有误，你可以直接在表格内双击手动修改！"); lbl_hint_step2.setStyleSheet("color: #007aff; font-size: 11px;"); v_mid.addWidget(lbl_hint_step2)
+        group_mid = QGroupBox("第二步：添加资源文件夹并自动提取名称/数量"); v_mid = QVBoxLayout()
+        v_mid.addWidget(self.create_hint_label("💡 操作顺序：【1.添加文件夹】把资源文件夹批量导入 → 【2.智能扫描提取】自动算出 P/V 数和最终标题。\n表格里任何一格都可以双击手动修改（比如标题、分类、标签）；改完会自动刷新。选错行就点【➖ 移除选中行】。", "primary"))
         h_toolbar = QHBoxLayout()
-        b_add = QPushButton("📁 1.添加文件夹"); b_add.setStyleSheet("background:#34c759; color:white; border:none;"); b_add.clicked.connect(self.batch_add_folder)
-        b_scn = QPushButton("🔍 2.智能扫描提取"); b_scn.setStyleSheet("background:#007aff; color:white; border:none;"); b_scn.clicked.connect(self.batch_scan_folders)
-        b_rn = QPushButton("🔄 3.序列化重命名 (可选)"); b_rn.setStyleSheet("background:#ff9500; color:white; border:none;"); b_rn.clicked.connect(self.batch_rename_files)
-        
-        b_sandbox = QPushButton("🧪 4.沙盒引擎(名称解析)"); b_sandbox.setStyleSheet("background:#c2185b; color:white; border:none;"); b_sandbox.clicked.connect(lambda: self.tabs.setCurrentIndex(1))
-        
-        b_del = QPushButton("➖ 移除选中行"); b_del.setStyleSheet("color:#ff3b30;"); b_del.clicked.connect(self.batch_remove_row)
-        b_clr = QPushButton("🗑 清空列表"); b_clr.setStyleSheet("background:#ff3b30; color:white; border:none;"); b_clr.clicked.connect(lambda: self.table.setRowCount(0))
+        b_add = QPushButton("📁 1.添加文件夹"); b_add.setStyleSheet("background:#34c759; color:white; border:none;"); b_add.setToolTip("可按住 Ctrl（Mac 为 Command）多选，一次导入多个资源文件夹。"); b_add.clicked.connect(self.batch_add_folder)
+        b_scn = QPushButton("🔍 2.智能扫描提取"); b_scn.setStyleSheet("background:#007aff; color:white; border:none;"); b_scn.setToolTip("扫描每个文件夹里的图片/视频数量，并按当前预设生成最终种子标题。"); b_scn.clicked.connect(self.batch_scan_folders)
+        b_rn = QPushButton("🔄 3.序列化重命名 (可选)"); b_rn.setStyleSheet("background:#ff9500; color:white; border:none;"); b_rn.setToolTip("把文件夹内的图片/视频重命名为 1.jpg、2.mp4…；不可逆，非必要别点。"); b_rn.clicked.connect(self.batch_rename_files)
+        b_sandbox = QPushButton("🧪 4.名称解析沙盒(调试)"); b_sandbox.setStyleSheet("background:#c2185b; color:white; border:none;"); b_sandbox.setToolTip("想预览/调试标题解析规则时用，看效果、不会影响正式流程。"); b_sandbox.clicked.connect(lambda: self.tabs.setCurrentIndex(1))
+        b_del = QPushButton("➖ 移除选中行"); b_del.setStyleSheet("color:#ff3b30;"); b_del.setToolTip("把表格里选中的行从待发布列表移除。"); b_del.clicked.connect(self.batch_remove_row)
+        b_clr = QPushButton("🗑 清空列表"); b_clr.setStyleSheet("background:#ff3b30; color:white; border:none;"); b_clr.setToolTip("清空整个待发布列表。"); b_clr.clicked.connect(lambda: self.table.setRowCount(0))
         h_toolbar.addWidget(b_add); h_toolbar.addWidget(b_scn); h_toolbar.addWidget(b_rn); h_toolbar.addWidget(b_sandbox); h_toolbar.addWidget(b_del); h_toolbar.addStretch(); h_toolbar.addWidget(b_clr); v_mid.addLayout(h_toolbar)
 
         self.table = QTableWidget(0, 12); self.table.verticalHeader().setDefaultSectionSize(34)
         self.table.setHorizontalHeaderLabels(["原始文件夹名", "最终种子名称", "应用预设", "锁定", "物理路径", "P/V数", "年份", "分类", "附加标签", "种子", "状态", "操作"])
+        for _i, _tip in enumerate([
+            "导入时的原始文件夹名（参考，不可改）",
+            "发布用的最终标题，可双击修改",
+            "这一行使用的预设模板",
+            "勾选后，切换顶部全局预设不会覆盖本行",
+            "资源在磁盘上的位置",
+            "图片/视频数量，例如 52P、1V",
+            "从名称里识别出的年份",
+            "发布到 PT 站的分类板块",
+            "除“官方/禁转”外额外附加的标签（可多选）",
+            "种子是否已生成",
+            "当前处理状态（成功/失败原因看这里）",
+            "单独移除这一行",
+        ]):
+            item = self.table.horizontalHeaderItem(_i)
+            if item: item.setToolTip(_tip)
         head = self.table.horizontalHeader(); head.setSectionResizeMode(QHeaderView.ResizeMode.Interactive); self.table.setColumnWidth(0, 100); head.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table.setColumnWidth(2, 110); self.table.setColumnWidth(3, 40); self.table.setColumnWidth(4, 90); self.table.setColumnWidth(5, 70); self.table.setColumnWidth(6, 60); self.table.setColumnWidth(7, 75); self.table.setColumnWidth(8, 120); self.table.setColumnWidth(9, 75); self.table.setColumnWidth(10, 80); self.table.setColumnWidth(11, 50)
         self.table.cellChanged.connect(self.on_table_cell_changed); v_mid.addWidget(self.table); group_mid.setLayout(v_mid); layout.addWidget(group_mid, 1) 
 
-        group_bot = QGroupBox("第三步：多线程任务操作台"); v_bot = QVBoxLayout(); h_exec = QHBoxLayout()
-        h_exec.addWidget(QLabel("封面处理:"))
-        b_auto_img = QPushButton("手动本地寻图"); b_auto_img.clicked.connect(self.batch_auto_match_thumbs)
-        b_man_img = QPushButton("单选定图"); b_man_img.clicked.connect(self.batch_manual_thumb)
-        b_jump_cover = QPushButton("✨ 去【封面拼图台】制作高级拼图"); b_jump_cover.setStyleSheet("background: #af52de; color: white;"); b_jump_cover.clicked.connect(lambda: self.tabs.setCurrentIndex(2))
-        self.chk_auto_cover = QCheckBox("☑️ 全自动模式下：去【封面台】输出目录抓取刚才生成好的极品封面图！")
+        # ---------- 第三步：封面准备 / 打包 / 发布 ----------
+        group_bot = QGroupBox("第三步：封面准备 ➜ 打包制种 ➜ 发布做种（新手可直接用底部【一键全自动】）"); v_bot = QVBoxLayout()
+
+        # 3.1 封面准备
+        v_bot.addWidget(QLabel("3.1 封面准备（可选；不设置也能发布，只是帖子没有封面图）"))
+        h_cover = QHBoxLayout()
+        b_auto_img = QPushButton("🖼️ 自动匹配本地封面"); b_auto_img.setToolTip("选择一个装了封面图的文件夹，程序会按资源名称自动找同名图片（支持 jpg / jpeg / png）。")
+        b_auto_img.clicked.connect(self.batch_auto_match_thumbs)
+        b_man_img = QPushButton("📌 为选中行指定封面"); b_man_img.setToolTip("先在上方表格里点选一行，再挑一张图片作为该资源的封面。")
+        b_man_img.clicked.connect(self.batch_manual_thumb)
+        b_jump_cover = QPushButton("🎨 去【封面拼图台】做四宫格封面"); b_jump_cover.setStyleSheet("background: #af52de; color: white;")
+        b_jump_cover.setToolTip("把每个资源的多张图拼成一张精美的四宫格封面；做好后在封面台设置输出目录并保存。")
+        b_jump_cover.clicked.connect(lambda: self.tabs.setCurrentIndex(2))
+        self.chk_auto_cover = QCheckBox("全自动时，自动使用【封面拼图台】输出目录里的封面")
         self.chk_auto_cover.setChecked(True); self.chk_auto_cover.setStyleSheet("color: #007aff; font-weight: bold;")
-        h_exec.addWidget(b_auto_img); h_exec.addWidget(b_man_img); h_exec.addWidget(b_jump_cover); h_exec.addWidget(self.chk_auto_cover); h_exec.addStretch(); v_bot.addLayout(h_exec)
-        
-        h_exec2 = QHBoxLayout(); h_exec2.addWidget(QLabel("发布处理:"))
-        self.btn_make = QPushButton("② 后台单机打包制种"); self.btn_make.clicked.connect(lambda: self.start_worker('make'))
-        self.btn_pub = QPushButton("③ 推送到 PT 站发包"); self.btn_pub.clicked.connect(lambda: self.start_worker('publish'))
-        h_exec2.addWidget(self.btn_make); h_exec2.addWidget(self.btn_pub); h_exec2.addStretch(); v_bot.addLayout(h_exec2)
-        
-        h_main_btn = QHBoxLayout(); self.btn_auto = QPushButton("🚀 一键全自动打包发布 (彻底解放双手)"); self.btn_auto.setStyleSheet("background: #007aff; color: white; font-size: 14px; padding: 10px 24px; border: none;"); self.btn_auto.clicked.connect(self.run_auto_publish)
-        self.btn_stop = QPushButton("🛑 强行终止任务"); self.btn_stop.setStyleSheet("background: #ff3b30; color: white; padding: 10px 20px; border: none;"); self.btn_stop.setEnabled(False); self.btn_stop.clicked.connect(self.force_stop_worker)
-        h_main_btn.addWidget(self.btn_auto, 3); h_main_btn.addWidget(self.btn_stop); v_bot.addLayout(h_main_btn)
-        
-        lbl_desc = self.create_hint_label("💡 流转说明：如果你点击了上方右侧的【🚀 一键全自动打包发布】按钮，程序会自动按顺序执行：1.自动寻图(或使用封面台生成图) ➔ 2.打包制种 ➔ 3.推送图床 ➔ 4.发布表单 ➔ 5.推送 qB 下载器做种。\n如果想单独执行某一步，也可以点击上面的分步按钮。", "primary"); v_bot.addWidget(lbl_desc)
+        self.chk_auto_cover.setToolTip("勾选后，点【一键全自动】时会先去封面输出目录把拼好的封面抓过来用。")
+        h_cover.addWidget(b_auto_img); h_cover.addWidget(b_man_img); h_cover.addWidget(b_jump_cover); h_cover.addWidget(self.chk_auto_cover); h_cover.addStretch()
+        v_bot.addLayout(h_cover)
+        v_bot.addWidget(self.create_hint_label("💡 封面怎么弄：常见做法是先去【🖼️ 封面拼图台】给每个资源拼好封面并保存到一个文件夹，然后回到这里点【自动匹配本地封面】；也可以勾选上面的选项，让【一键全自动】自动去抓。跳过这一步也没关系。", "primary"))
+
+        # 3.2 分步执行
+        v_bot.addWidget(self.get_hline())
+        v_bot.addWidget(QLabel("3.2 分步执行（只想单独重跑某一步时用；两步通常要按顺序做）"))
+        h_exec2 = QHBoxLayout()
+        self.btn_make = QPushButton("📦 第1步：打包并制作种子"); self.btn_make.setStyleSheet("background:#34c759; color:white; border:none; padding:7px 12px; border-radius:4px;")
+        self.btn_make.setToolTip("把每个资源的文件夹压缩成 ZIP，并生成对应的 .torrent 种子文件（不做这一步就没法发布）。")
+        self.btn_make.clicked.connect(lambda: self.start_worker('make'))
+        self.btn_pub = QPushButton("🚀 第2步：推送到 PT 站并做种"); self.btn_pub.setStyleSheet("background:#ff9500; color:white; border:none; padding:7px 12px; border-radius:4px;")
+        self.btn_pub.setToolTip("把上一步做好的种子发布到 PT 站，并推送到 qBittorrent 开始做种（需要先在偏好设置里填好 Cookie 和 qB）。")
+        self.btn_pub.clicked.connect(lambda: self.start_worker('publish'))
+        h_exec2.addWidget(self.btn_make); h_exec2.addWidget(self.btn_pub); h_exec2.addStretch()
+        v_bot.addLayout(h_exec2)
+
+        # 3.3 一键全自动 + 停止
+        v_bot.addWidget(self.get_hline())
+        h_main_btn = QHBoxLayout()
+        self.btn_auto = QPushButton("🚀 一键全自动打包发布（新手推荐）"); self.btn_auto.setStyleSheet("background: #007aff; color: white; font-size: 14px; padding: 10px 24px; border: none; border-radius: 5px;")
+        self.btn_auto.setToolTip("自动依次完成：找封面 ➜ 打包制种 ➜ 上传图床 ➜ 发布 PT ➜ 推送 qB 做种。")
+        self.btn_auto.clicked.connect(self.run_auto_publish)
+        self.btn_stop = QPushButton("🛑 停止当前任务"); self.btn_stop.setStyleSheet("background: #ff3b30; color: white; padding: 10px 20px; border: none; border-radius: 5px;")
+        self.btn_stop.setToolTip("中断正在进行的后台任务（建议等当前这一项处理完再点）。")
+        self.btn_stop.setEnabled(False); self.btn_stop.clicked.connect(self.force_stop_worker)
+        h_main_btn.addWidget(self.btn_auto, 3); h_main_btn.addWidget(self.btn_stop)
+        v_bot.addLayout(h_main_btn)
+        v_bot.addWidget(self.create_hint_label("💡 新手建议：直接用【🚀 一键全自动打包发布】，它会按 找封面 ➜ 打包制种 ➜ 上传图床 ➜ 发布表单 ➜ 推送 qB 做种的顺序全部做好。只有想单独重做某一步时，才用上面的【3.2 分步执行】。", "primary"))
+
         self.batch_progress = QProgressBar(); self.batch_progress.setValue(0); v_bot.addWidget(self.batch_progress)
-        
-        h_log_header = QHBoxLayout(); h_log_header.addWidget(QLabel("📝 进度监听:")); h_log_header.addStretch()
+
+        h_log_header = QHBoxLayout(); h_log_header.addWidget(QLabel("📝 实时进度（这里会显示每一步的结果和报错）")); h_log_header.addStretch()
         self.batch_log = QTextEdit(); self.batch_log.setObjectName("BatchLogView"); self.batch_log.setFixedHeight(120); self.batch_log.setReadOnly(True)
-        btn_clr_batch_log = QPushButton("🗑 清空回显"); btn_clr_batch_log.setStyleSheet("color:#ff3b30; background:transparent; border:none;"); btn_clr_batch_log.setCursor(Qt.CursorShape.PointingHandCursor); btn_clr_batch_log.clicked.connect(self.batch_log.clear)
+        btn_clr_batch_log = QPushButton("🗑 清空"); btn_clr_batch_log.setStyleSheet("color:#ff3b30; background:transparent; border:none;"); btn_clr_batch_log.setCursor(Qt.CursorShape.PointingHandCursor); btn_clr_batch_log.clicked.connect(self.batch_log.clear)
         h_log_header.addWidget(btn_clr_batch_log); v_bot.addLayout(h_log_header); v_bot.addWidget(self.batch_log); group_bot.setLayout(v_bot); layout.addWidget(group_bot, 0)
         
         self.refresh_main_preset_combo()
@@ -877,6 +1102,7 @@ class PTUploaderFullGUI(PTUploaderBase):
         v_left = QVBoxLayout()
         h_left_top = QHBoxLayout()
         btn_add_rule = QPushButton("➕ 添加规则")
+        btn_add_rule.setToolTip("添加一条“查找 ➜ 替换”规则，用来清洗标题里的多余文字（按从上到下的顺序执行）。")
         btn_add_rule.clicked.connect(self.sandbox_add_rule)
         btn_save_rule = QPushButton("💾 保存规则到配置")
         btn_save_rule.setStyleSheet("background-color: #34c759; color: white; border: none; padding: 6px 15px; border-radius: 4px;")
@@ -901,13 +1127,16 @@ class PTUploaderFullGUI(PTUploaderBase):
         h_right_top = QHBoxLayout()
         self.sandbox_combo_mode = QComboBox()
         self.sandbox_combo_mode.addItems(["模拟【简单提取】效果", "模拟【强效重组】效果", "模拟【禁用提取】效果"])
+        self.sandbox_combo_mode.setToolTip("只改变下面预览用的解析方式，不会影响正式流程。")
         
         btn_run_test = QPushButton("▶️ 运行解析对照测试")
         btn_run_test.setStyleSheet("background-color: #007aff; color: white; padding: 6px 15px; border-radius: 4px; font-weight: bold; border: none;")
+        btn_run_test.setToolTip("用上方列表里的资源跑一遍，看看每个资源最终会生成什么标题。")
         btn_run_test.clicked.connect(self.sandbox_run_test)
         
         btn_goto_settings = QPushButton("⚙️ 检查全局解析模式 (去设置页)")
         btn_goto_settings.setStyleSheet("background-color: #5856d6; color: white; padding: 6px 15px; border-radius: 4px; font-weight: bold; border: none;")
+        btn_goto_settings.setToolTip("真正生效的解析模式在【偏好设置】里，这里只做预览。")
         btn_goto_settings.clicked.connect(lambda: self.tabs.setCurrentIndex(3))
         
         h_right_top.addWidget(self.sandbox_combo_mode)
@@ -986,11 +1215,11 @@ class PTUploaderFullGUI(PTUploaderBase):
         self.log_msg(f"🧪 沙盒运行了解析对照测试，当前推演模式: {mode_text}", "INFO")
         
         for r in range(row_count):
-            raw_title = self.table.item(r, 0).text()
+            raw_title = self.table.item(r, 0).text() if self.table.item(r, 0) else ""
             amount_str = self.table.item(r, 5).text() if self.table.item(r, 5) else ""
             
             preset_name = self.table.cellWidget(r, 2).currentText() if self.table.cellWidget(r, 2) else ""
-            preset = next((p for p in self.presets_data if p["name"] == preset_name), {})
+            preset = self.find_preset(preset_name)
             
             std_name, _ = self.get_parsed_name(raw_title, amount_str, preset, parse_mode, current_rules)
             
@@ -1003,26 +1232,27 @@ class PTUploaderFullGUI(PTUploaderBase):
 
     def setup_cover_tab(self):
         layout = QVBoxLayout(self.tab_cover)
-        g_paths = QGroupBox("1. 封面输出路径设置"); f_paths = QFormLayout()
-        self.cover_save_dir = QLineEdit(); self.cover_save_dir.setPlaceholderText("选择拼接后封面的统一保存路径...")
-        h_dir = QHBoxLayout(); h_dir.addWidget(self.cover_save_dir); btn_dir = QPushButton("浏览"); btn_dir.clicked.connect(lambda: self.browse_folder(self.cover_save_dir)); h_dir.addWidget(btn_dir)
+        g_paths = QGroupBox("① 封面输出目录（拼好的封面统一保存在这里）"); f_paths = QFormLayout()
+        self.cover_save_dir = QLineEdit(); self.cover_save_dir.setPlaceholderText("点右侧【浏览】选择保存封面的文件夹…")
+        self.cover_save_dir.setToolTip("封面会按“资源名.jpg”保存到这里；批量发布时按文件名自动匹配，所以建议用固定目录。")
+        h_dir = QHBoxLayout(); h_dir.addWidget(self.cover_save_dir); btn_dir = QPushButton("浏览"); btn_dir.setToolTip("选择封面输出文件夹"); btn_dir.clicked.connect(lambda: self.browse_folder(self.cover_save_dir)); h_dir.addWidget(btn_dir)
         f_paths.addRow("封面输出目录:", h_dir); g_paths.setLayout(f_paths); layout.addWidget(g_paths, 0)
         
         h_main = QHBoxLayout()
-        g_list = QGroupBox("2. 待处理资源库 (允许多选批量操作)"); v_list = QVBoxLayout(); h_list_btns = QHBoxLayout()
-        btn_add_f = QPushButton("📁 加载资源文件夹"); btn_add_f.clicked.connect(self.cover_load_folders)
-        btn_del_f = QPushButton("➖ 移除选中"); btn_del_f.setStyleSheet("color: #ff3b30;"); btn_del_f.clicked.connect(self.cover_remove_selected_folder)
-        btn_sel_all = QPushButton("☑️ 全选列表"); btn_sel_all.clicked.connect(lambda: self.cover_list.selectAll())
-        btn_clear_f = QPushButton("🗑 清空库"); btn_clear_f.clicked.connect(lambda: self.cover_list.clear())
+        g_list = QGroupBox("② 待处理资源库（可多选批量操作）"); v_list = QVBoxLayout(); h_list_btns = QHBoxLayout()
+        btn_add_f = QPushButton("📁 加载资源文件夹"); btn_add_f.setToolTip("把要拼封面的资源文件夹加进来（可一次多选）。"); btn_add_f.clicked.connect(self.cover_load_folders)
+        btn_del_f = QPushButton("➖ 移除选中"); btn_del_f.setStyleSheet("color: #ff3b30;"); btn_del_f.setToolTip("从列表里移除选中的资源。"); btn_del_f.clicked.connect(self.cover_remove_selected_folder)
+        btn_sel_all = QPushButton("☑️ 全选列表"); btn_sel_all.setToolTip("选中列表里的全部资源。"); btn_sel_all.clicked.connect(lambda: self.cover_list.selectAll())
+        btn_clear_f = QPushButton("🗑 清空库"); btn_clear_f.setToolTip("清空整个列表。"); btn_clear_f.clicked.connect(lambda: self.cover_list.clear())
         h_list_btns.addWidget(btn_add_f); h_list_btns.addWidget(btn_sel_all); h_list_btns.addWidget(btn_del_f); h_list_btns.addWidget(btn_clear_f); v_list.addLayout(h_list_btns)
-        lbl_hint_list = QLabel("💡 提示：按住 Shift 或 Command(Ctrl) 可以多选列表项。"); lbl_hint_list.setStyleSheet("color: #007aff; font-size: 11px;"); lbl_hint_list.setWordWrap(True); v_list.addWidget(lbl_hint_list)
+        lbl_hint_list = QLabel("💡 在列表里点一个资源，右边就会出现它的四宫格预览；按住 Shift 或 Ctrl(Command) 可多选。"); lbl_hint_list.setStyleSheet("color: #007aff; font-size: 11px;"); lbl_hint_list.setWordWrap(True); v_list.addWidget(lbl_hint_list)
         self.cover_list = QListWidget()
         self.cover_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection) 
         self.cover_list.itemSelectionChanged.connect(self.cover_item_selected); v_list.addWidget(self.cover_list); g_list.setLayout(v_list); h_main.addWidget(g_list, 1)
         
-        g_prev = QGroupBox("3. 封面拖拽交互工作台 (原生高精度微积分算法，完美复刻美图秀秀)"); v_prev = QVBoxLayout()
+        g_prev = QGroupBox("③ 封面预览与微调工作台"); v_prev = QVBoxLayout()
         
-        lbl_prev_hint = QLabel("💡 画布指南：深灰色区域为工作台画布。操作说明：\n1. 【双击图片】可快速替换该位置的图片。\n2. 在灰色画布区（不要点图片）【按住 Ctrl + 滚动滚轮】可整体无极缩放工作台。\n3. 若图片被拖拽出画框太远，松开鼠标会自动复位。")
+        lbl_prev_hint = QLabel("💡 画布操作：\n1. 点住图片可拖动位置、滚轮（先点选图片）可缩放，拖太远松手会自动复位。\n2. 【双击图片】可替换那一格的图片。\n3. 满意后点下方【💾 保存并生成】，会按资源名保存到上面的输出目录。")
         lbl_prev_hint.setStyleSheet("color: #ff9500; font-size: 11px; font-weight: bold;"); v_prev.addWidget(lbl_prev_hint)
         
         self.lbl_preview = CollageView()
@@ -1034,12 +1264,14 @@ class PTUploaderFullGUI(PTUploaderBase):
         self.cover_log = QTextEdit(); self.cover_log.setReadOnly(True); self.cover_log.setFixedHeight(60); self.cover_log.setStyleSheet("background-color: #1e1e1e; color: #34c759; font-family: Consolas; font-size: 11px;"); v_prev.addWidget(self.cover_log)
         
         h_actions1 = QHBoxLayout()
-        btn_rand = QPushButton("🎲 随机拼图 (针对选中的项)")
+        btn_rand = QPushButton("🎲 随机换一批（对选中的项）")
         btn_rand.setStyleSheet("background: #007aff; color: white; padding: 8px; border-radius: 5px; font-weight: bold; border: none;")
+        btn_rand.setToolTip("从每个选中资源里重新随机挑 4 张图放进四宫格。")
         btn_rand.clicked.connect(self.cover_gen_random_selected)
         
-        btn_save_single = QPushButton("💾 保存并生成 (针对选中的项)")
+        btn_save_single = QPushButton("💾 保存并生成封面（对选中的项）")
         btn_save_single.setStyleSheet("background: #ff9500; color: white; padding: 8px; border-radius: 5px; font-weight: bold; border: none;")
+        btn_save_single.setToolTip("把选中的资源逐个渲染并保存成“资源名.jpg”到输出目录。")
         btn_save_single.clicked.connect(self.cover_save_selected)
         
         h_actions1.addWidget(btn_rand); h_actions1.addWidget(btn_save_single); v_prev.addLayout(h_actions1)
@@ -1072,6 +1304,9 @@ class PTUploaderFullGUI(PTUploaderBase):
         hr2 = QHBoxLayout(); hr2.addWidget(QLabel("图床上传失败时重试次数:")); self.spin_img_retry = QSpinBox(); self.spin_img_retry.setRange(1, 10); hr2.addWidget(self.spin_img_retry); hr2.addWidget(QLabel("次 (默认3次)")); hr2.addStretch(); fn.addRow("图床容错机制:", hr2)
         
         hr = QHBoxLayout(); hr.addWidget(QLabel("自动发种时，两个种子间隔时间:")); self.spin_delay = QSpinBox(); self.spin_delay.setMaximum(9999); hr.addWidget(self.spin_delay); hr.addWidget(QLabel("秒 (默认3秒，为0时不限制)")); hr.addStretch(); fn.addRow("发种限流保护:", hr)
+        hp = QHBoxLayout(); self.chk_proxy = QCheckBox("启用网络代理"); self.chk_proxy.setChecked(False); self.chk_proxy.setToolTip("使用 VPN / 代理（如 Clash、v2ray）时勾选，否则 PT 站/图床请求可能失败。默认关闭。")
+        self.input_proxy = QLineEdit(); self.input_proxy.setText("127.0.0.1:7897"); self.input_proxy.setPlaceholderText("例如 127.0.0.1:7897")
+        hp.addWidget(self.chk_proxy); hp.addWidget(QLabel("代理地址:")); hp.addWidget(self.input_proxy); hp.addWidget(QLabel("(默认 127.0.0.1:7897)")); hp.addStretch(); fn.addRow("网络代理:", hp)
         gn.setLayout(fn); layout.addWidget(gn)
         ga = QGroupBox("⚙️ 防误抓拦截规则与自动化配置"); fa = QFormLayout(); fa.setSpacing(14)
         
@@ -1079,10 +1314,13 @@ class PTUploaderFullGUI(PTUploaderBase):
         self.input_qb_category = QLineEdit(); self.input_qb_category.setPlaceholderText("选填，例如：PT")
         self.input_qb_tags = QLineEdit(); self.input_qb_tags.setPlaceholderText("选填，多个标签请用英文逗号分隔")
         self.chk_qb_add = QCheckBox("将种子自动推送到 qBittorrent 并强制开启做种")
+        self.chk_reuse_existing = QCheckBox("复用已存在的 ZIP/种子（内容未变时跳过重新生成，提速；默认关闭）")
+        self.chk_reuse_existing.setToolTip("勾选后：若做种目录里已有同名 ZIP，且种子目录里已有同名 .torrent，则直接复用，不重新打包/制种。\n注意：源文件夹内容变化后请取消勾选，或手动删除旧文件，否则会用到过期的种子。")
         
         fa.addRow("qB 端口地址:", self.input_qb_url); fa.addRow("qB 账号:", self.input_qb_user); fa.addRow("qB 密码:", self.input_qb_pwd)
         fa.addRow("qB 下载分类:", self.input_qb_category); fa.addRow("qB 下载标签:", self.input_qb_tags)
         fa.addRow("", self.chk_qb_add)
+        fa.addRow("", self.chk_reuse_existing)
         
         b_qb = QPushButton("测试连接 qBittorrent"); b_qb.setStyleSheet("background-color: #007aff; color: white; border: none;"); b_qb.clicked.connect(self.test_qb_connection); fa.addRow("", b_qb)
         fa.addRow(self.get_hline())
@@ -1140,7 +1378,10 @@ class PTUploaderFullGUI(PTUploaderBase):
 
     def refresh_main_preset_combo(self):
         cur = self.preset_combo.currentText(); self.preset_combo.blockSignals(True); self.preset_combo.clear(); self.preset_combo.addItem("请选择预设模板...")
-        for p in self.presets_data: self.preset_combo.addItem(p["name"])
+        for p in self.presets_data:
+            pname = p.get("name") if isinstance(p, dict) else None
+            if not pname: self.log_msg("⚠️ 跳过缺少名称的预设条目", "WARNING"); continue
+            self.preset_combo.addItem(pname)
         idx = self.preset_combo.findText(cur)
         if idx >= 0: self.preset_combo.setCurrentIndex(idx)
         else: self.preset_combo.setCurrentIndex(0)
@@ -1150,7 +1391,10 @@ class PTUploaderFullGUI(PTUploaderBase):
             row_combo = self.table.cellWidget(row, 2)
             if row_combo:
                 row_cur = row_combo.currentText(); row_combo.blockSignals(True); row_combo.clear(); row_combo.addItem("无预设")
-                for p in self.presets_data: row_combo.addItem(p["name"])
+                for p in self.presets_data:
+                    pname = p.get("name") if isinstance(p, dict) else None
+                    if not pname: continue
+                    row_combo.addItem(pname)
                 row_idx = row_combo.findText(row_cur)
                 if row_idx >= 0: row_combo.setCurrentIndex(row_idx)
                 row_combo.blockSignals(False)
@@ -1159,11 +1403,11 @@ class PTUploaderFullGUI(PTUploaderBase):
 
     def preset_changed(self):
         p_name = self.preset_combo.currentText()
-        for p in self.presets_data:
-            if p["name"] == p_name:
-                tags_str = ", ".join(p.get("tags", []))
-                info_text = (f"📸 摄影师：{p.get('photographer', '未配置')}   |   👤 主角/模特：{p.get('model', '未配置')}\n🎯 默认分类：{p.get('category', '默认')}   |   🏷️ 附带标签：{tags_str}\n📝 简介内容：{p.get('intro', '无')}")
-                self.preset_info_label.setText(info_text); break
+        preset = self.find_preset(p_name)
+        if preset:
+            tags_str = ", ".join(preset.get("tags", []))
+            info_text = (f"📸 摄影师：{preset.get('photographer', '未配置')}   |   👤 主角/模特：{preset.get('model', '未配置')}\n🎯 默认分类：{preset.get('category', '默认')}   |   🏷️ 附带标签：{tags_str}\n📝 简介内容：{preset.get('intro', '无')}")
+            self.preset_info_label.setText(info_text)
         if p_name == "请选择预设模板...": self.preset_info_label.setText("💡 请选择一个全局默认预设，作为后续新增资源的初始配置。")
 
         for row in range(self.table.rowCount()):
@@ -1201,7 +1445,10 @@ class PTUploaderFullGUI(PTUploaderBase):
         row = self.table.rowCount(); self.table.insertRow(row)
         self.table.setItem(row, 0, QTableWidgetItem(os.path.basename(folder_path))); self.table.setItem(row, 1, QTableWidgetItem("（等待扫描中...）"))
         combo_preset = QComboBox(); combo_preset.addItem("无预设")
-        for p in self.presets_data: combo_preset.addItem(p["name"])
+        for p in self.presets_data:
+            pname = p.get("name") if isinstance(p, dict) else None
+            if not pname: self.log_msg("⚠️ 跳过缺少名称的预设条目", "WARNING"); continue
+            combo_preset.addItem(pname)
         global_preset = self.preset_combo.currentText()
         if global_preset != "请选择预设模板...": combo_preset.setCurrentText(global_preset)
         combo_preset.currentIndexChanged.connect(lambda idx, r=row: self.on_row_preset_changed(r)); self.table.setCellWidget(row, 2, combo_preset)
@@ -1221,7 +1468,7 @@ class PTUploaderFullGUI(PTUploaderBase):
     def on_row_preset_changed(self, row):
         self.table.blockSignals(True)
         try:
-            preset_name = self.table.cellWidget(row, 2).currentText(); preset = next((p for p in self.presets_data if p["name"] == preset_name), {})
+            preset_name = self.table.cellWidget(row, 2).currentText() if self.table.cellWidget(row, 2) else ""; preset = self.find_preset(preset_name)
             if cw := self.table.cellWidget(row, 7): cw.setCurrentText(preset.get("category", "请选择分类..."))
             if tw := self.table.cellWidget(row, 8): tw.set_items(GLOBAL_TAGS, preset.get("tags", []))
         finally: self.table.blockSignals(False)
@@ -1232,7 +1479,7 @@ class PTUploaderFullGUI(PTUploaderBase):
             self.table.blockSignals(True)
             try:
                 preset_name = self.table.cellWidget(row, 2).currentText() if self.table.cellWidget(row, 2) else ""
-                preset = next((p for p in self.presets_data if p["name"] == preset_name), {})
+                preset = self.find_preset(preset_name)
                 f_name = self.table.item(row, 0).text() if self.table.item(row, 0) else ""
                 amount = self.table.item(row, 5).text() if self.table.item(row, 5) else ""
                 
@@ -1252,39 +1499,58 @@ class PTUploaderFullGUI(PTUploaderBase):
         elif self.rb_full.isChecked(): parse_mode = "full"
         self.log_msg(f"开始智能扫描提取 (采用提取模式: {parse_mode})", "INFO"); self.table.blockSignals(True)
         global_preset = self.preset_combo.currentText()
-        for row in range(self.table.rowCount()):
-            f_path = self.table.item(row, 4).text(); f_name = os.path.basename(f_path); QApplication.processEvents()
-            is_locked = False; w_lock = self.table.cellWidget(row, 3)
-            if w_lock:
-                chk = w_lock.findChild(QCheckBox)
-                if chk and chk.isChecked(): is_locked = True
-            row_combo = self.table.cellWidget(row, 2)
-            if row_combo and global_preset != "请选择预设模板..." and not is_locked: row_combo.setCurrentText(global_preset)
-            preset_name = self.table.cellWidget(row, 2).currentText() if self.table.cellWidget(row, 2) else ""; preset = next((p for p in self.presets_data if p["name"] == preset_name), {})
-            if kws or exts:
-                try:
-                    for root, _, files in os.walk(f_path):
-                        for file in files:
-                            lf = file.lower()
-                            if any(lf.endswith(ext) for ext in exts) or any(kw in lf for kw in kws): os.remove(os.path.join(root, file)); total_cleaned += 1; self.log_msg(f"🛡 触发防拦截规则，已删除文件: {file}", "WARNING"); QApplication.processEvents()
-                except Exception as e: self.log_msg(f"清理文件时报错: {e}", "ERROR")
-            img_c = len([f for f in os.listdir(f_path) if f.lower().endswith(('.jpg', '.jpeg', '.png'))])
-            vid_c = len([f for f in os.listdir(f_path) if f.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.ts'))])
-            amount_parts = []
-            
-            if img_c > 0: amount_parts.append(f"{img_c}P")
-            if vid_c > 0: amount_parts.append(f"{vid_c}V")
-            amount_str = "".join(amount_parts); self.table.setItem(row, 5, QTableWidgetItem(amount_str))
-            
-            std_name, year = self.get_parsed_name(f_name, amount_str, preset, parse_mode)
-            
-            self.table.setItem(row, 6, QTableWidgetItem(year))
-            self.table.setItem(row, 1, QTableWidgetItem(std_name)); self.log_msg(f" -> 提取并组装名称: {std_name}")
-            if cw := self.table.cellWidget(row, 7): 
-                if cw.currentText() == "请选择分类...": cw.setCurrentText(preset.get("category", "请选择分类..."))
-            if tw := self.table.cellWidget(row, 8): tw.set_items(GLOBAL_TAGS, preset.get("tags", []))
-            self.table.setItem(row, 10, QTableWidgetItem("✅ 参数校验完毕")); self.batch_progress.setValue(int(((row + 1) / self.table.rowCount()) * 100))
-        self.table.blockSignals(False)
+        try:
+            for row in range(self.table.rowCount()):
+                folder_item = self.table.item(row, 4)
+                if not folder_item:
+                    self.log_msg(f"⚠️ 第 {row+1} 行缺少路径数据，已跳过", "WARNING")
+                    self.table.setItem(row, 10, QTableWidgetItem("❌ 无路径"))
+                    continue
+                f_path = folder_item.text(); f_name = os.path.basename(f_path); QApplication.processEvents()
+                if not os.path.isdir(f_path):
+                    self.log_msg(f"⚠️ 路径已失效，跳过: {f_path}", "WARNING")
+                    status_item = QTableWidgetItem("❌ 路径失效"); status_item.setForeground(QBrush(QColor("#ff3b30")))
+                    self.table.setItem(row, 10, status_item)
+                    continue
+                is_locked = False; w_lock = self.table.cellWidget(row, 3)
+                if w_lock:
+                    chk = w_lock.findChild(QCheckBox)
+                    if chk and chk.isChecked(): is_locked = True
+                row_combo = self.table.cellWidget(row, 2)
+                if row_combo and global_preset != "请选择预设模板..." and not is_locked: row_combo.setCurrentText(global_preset)
+                preset_name = self.table.cellWidget(row, 2).currentText() if self.table.cellWidget(row, 2) else ""; preset = self.find_preset(preset_name)
+                deleted_paths = set()
+                if kws or exts:
+                    try:
+                        for root, _, files in os.walk(f_path):
+                            for file in files:
+                                lf = file.lower()
+                                if any(lf.endswith(ext) for ext in exts) or any(kw in lf for kw in kws):
+                                    full_path = os.path.join(root, file)
+                                    try: os.remove(full_path); deleted_paths.add(os.path.normcase(full_path))
+                                    except Exception as e: self.log_msg(f"删除文件失败 {file}: {e}", "ERROR"); continue
+                                    total_cleaned += 1; self.log_msg(f"🛡 触发防拦截规则，已删除文件: {file}", "WARNING"); QApplication.processEvents()
+                    except Exception as e: self.log_msg(f"清理文件时报错: {e}", "ERROR")
+                img_c = 0; vid_c = 0
+                for root, _, files in os.walk(f_path):
+                    for file in files:
+                        if os.path.normcase(os.path.join(root, file)) in deleted_paths: continue
+                        lf = file.lower()
+                        if lf.endswith(('.jpg', '.jpeg', '.png')): img_c += 1
+                        elif lf.endswith(('.mp4', '.mkv', '.avi', '.mov', '.ts')): vid_c += 1
+                amount_parts = []
+                if img_c > 0: amount_parts.append(f"{img_c}P")
+                if vid_c > 0: amount_parts.append(f"{vid_c}V")
+                amount_str = "".join(amount_parts); self.table.setItem(row, 5, QTableWidgetItem(amount_str))
+                std_name, year = self.get_parsed_name(f_name, amount_str, preset, parse_mode)
+                self.table.setItem(row, 6, QTableWidgetItem(year))
+                self.table.setItem(row, 1, QTableWidgetItem(std_name)); self.log_msg(f" -> 提取并组装名称: {std_name}")
+                if cw := self.table.cellWidget(row, 7):
+                    if cw.currentText() == "请选择分类...": cw.setCurrentText(preset.get("category", "请选择分类..."))
+                if tw := self.table.cellWidget(row, 8): tw.set_items(GLOBAL_TAGS, preset.get("tags", []))
+                self.table.setItem(row, 10, QTableWidgetItem("✅ 参数校验完毕")); self.batch_progress.setValue(int(((row + 1) / self.table.rowCount()) * 100))
+        finally:
+            self.table.blockSignals(False)
         if total_cleaned > 0: self.log_msg(f"扫描完毕，共计删除 {total_cleaned} 个违规广告文件。", "SUCCESS"); QMessageBox.information(self, "防误抓提示", f"拦截规则生效，共清理了 {total_cleaned} 个可能会引发站内封号的文件。")
 
     def log_cover(self, msg, level="INFO"):
@@ -1300,8 +1566,11 @@ class PTUploaderFullGUI(PTUploaderBase):
             for f in files:
                 if f.lower().endswith(('.jpg', '.jpeg', '.png')): all_imgs.append(os.path.join(root, f))
         if not all_imgs: return []
-        import random; selected = random.choices(all_imgs, k=min(4, len(all_imgs)))
-        while len(selected) < 4: selected.append(selected[0] if selected else "")
+        import random
+        if len(all_imgs) >= 4: selected = random.sample(all_imgs, 4)
+        else:
+            selected = list(all_imgs)
+            while len(selected) < 4: selected.append(selected[0] if selected else "")
         self.cover_assignments[folder_path] = selected
         return selected
 
@@ -1328,7 +1597,7 @@ class PTUploaderFullGUI(PTUploaderBase):
         for item in self.cover_list.selectedItems(): 
             if getattr(self, 'current_preview_folder', None) == item.text():
                 self.current_preview_folder = None
-                self.lbl_preview.scene.clear()
+                self.lbl_preview.clear_images()
             
             if item.text() in self.cover_states: del self.cover_states[item.text()]
             if item.text() in self.cover_assignments: del self.cover_assignments[item.text()]
@@ -1367,7 +1636,7 @@ class PTUploaderFullGUI(PTUploaderBase):
                 self.lbl_preview.load_images(paths)
                 self.cover_states[folder_path] = self.lbl_preview.get_state()
             else: 
-                self.lbl_preview.scene.clear()
+                self.lbl_preview.clear_images()
                 self.log_cover("❌ 此文件夹内无图片", "WARNING")
 
     def cover_change_single_image_from_event(self, idx, current_path):
@@ -1425,7 +1694,7 @@ class PTUploaderFullGUI(PTUploaderBase):
         
         for i, item in enumerate(items_to_process):
             folder_path = item.text()
-            folder_name = os.path.basename(folder_path)
+            folder_name = os.path.basename(folder_path); safe_name = sanitize_filename(folder_name)
             
             if folder_path not in self.cover_assignments:
                 self._assign_random_images(folder_path)
@@ -1441,9 +1710,11 @@ class PTUploaderFullGUI(PTUploaderBase):
                 self.cover_states[folder_path] = self.lbl_preview.get_state()
             QApplication.processEvents()
                 
-            out_path = os.path.join(save_dir, f"{folder_name}.jpg")
-            self.lbl_preview.render_to_file(out_path)
-            self.log_cover(f"[{i+1}/{len(sel)}] 已生成: {folder_name}.jpg", "SUCCESS")
+            out_path = os.path.join(save_dir, f"{safe_name}.jpg")
+            if not self.lbl_preview.render_to_file(out_path):
+                self.log_cover(f"❌ 封面写入失败: {safe_name}.jpg", "ERROR")
+            else:
+                self.log_cover(f"[{i+1}/{len(sel)}] 已生成: {safe_name}.jpg", "SUCCESS")
             mc += 1
             self.cover_progress.setValue(int(((i + 1) / len(sel)) * 100))
             
@@ -1452,7 +1723,7 @@ class PTUploaderFullGUI(PTUploaderBase):
             if current_preview in self.cover_states:
                 self.lbl_preview.load_state(self.cover_states[current_preview])
             
-        self.log_cover(f"🎉 批量拼图结束，成功产出 {mc} 张极品封面！", "SUCCESS")
+        self.log_cover(f"🎉 批量拼图结束，成功产出 {mc} 张封面！", "SUCCESS")
 
     def batch_auto_match_thumbs(self, auto_dir=None):
         if self.table.rowCount() == 0: return False
@@ -1464,12 +1735,19 @@ class PTUploaderFullGUI(PTUploaderBase):
             
         thumb_dir = self.get_abs_path(thumb_dir); mc = 0; self.batch_progress.setValue(0); self.log_msg(f"开始在文件夹 {thumb_dir} 中自动匹配封面...", "INFO")
         for row in range(self.table.rowCount()):
-            name = self.table.item(row, 0).text().strip(); QApplication.processEvents(); mp = None
-            for ext in ['.jpg', '.jpeg', '.png']:
-                tp = os.path.join(thumb_dir, f"{name}{ext}")
-                if os.path.exists(tp): mp = tp; break
-            if mp: self.table.item(row, 4).setData(Qt.ItemDataRole.UserRole, mp); self.table.setItem(row, 10, QTableWidgetItem("✅ 封面已匹配")); mc += 1
-            else: self.table.setItem(row, 10, QTableWidgetItem("❌ 未找到封面"))
+            name_item = self.table.item(row, 0); path_item = self.table.item(row, 4)
+            name = sanitize_filename(name_item.text().strip()) if name_item else ""
+            QApplication.processEvents(); mp = None
+            if name:
+                for ext in ['.jpg', '.jpeg', '.png']:
+                    tp = find_existing_file(os.path.join(thumb_dir, f"{name}{ext}"))
+                    if tp: mp = tp; break
+            if mp:
+                if path_item: path_item.setData(Qt.ItemDataRole.UserRole, mp)
+                self.table.setItem(row, 10, QTableWidgetItem("✅ 封面已匹配")); mc += 1
+            else:
+                if path_item: path_item.setData(Qt.ItemDataRole.UserRole, None)
+                self.table.setItem(row, 10, QTableWidgetItem("❌ 未找到封面"))
             self.batch_progress.setValue(int(((row + 1) / self.table.rowCount()) * 100))
         self.log_msg(f"自动匹配完成, 成功找回 {mc} 张封面图片。", "SUCCESS"); return True
 
@@ -1477,28 +1755,42 @@ class PTUploaderFullGUI(PTUploaderBase):
         sel = self.table.selectedRanges()
         if not sel: return QMessageBox.warning(self, "提示", "请先在表格中点击选中一行。")
         fp, _ = QFileDialog.getOpenFileName(self, "手动选择封面图片", self.last_dir, "Images (*.png *.jpg *.jpeg)")
-        if fp: self.last_dir = os.path.dirname(fp); self.table.item(sel[0].topRow(), 4).setData(Qt.ItemDataRole.UserRole, fp); self.table.setItem(sel[0].topRow(), 10, QTableWidgetItem("✅ 封面已手动指定")); self.batch_progress.setValue(100)
+        if fp:
+            self.last_dir = os.path.dirname(fp); row = sel[0].topRow(); path_item = self.table.item(row, 4)
+            if path_item: path_item.setData(Qt.ItemDataRole.UserRole, fp)
+            self.table.setItem(row, 10, QTableWidgetItem("✅ 封面已手动指定")); self.batch_progress.setValue(100)
 
     def set_buttons_state(self, running):
         state = not running; self.btn_auto.setEnabled(state); self.btn_make.setEnabled(state); self.btn_pub.setEnabled(state); self.btn_stop.setEnabled(running)
 
     def build_config_for_worker(self):
         return {
-            'pt_url': self.input_pt_url.text().strip() + ('/' if not self.input_pt_url.text().endswith('/') else ''), 'cookie': self.input_cookie.text().strip(), 'torrent_dir': self.get_abs_path(self.input_t_path.text()), 'seeding_dir': self.get_abs_path(self.input_s_path.text()), 'use_zip': self.cb_batch_zip.isChecked(), 'test_mode': self.cb_batch_test.isChecked(), 'anonymous': self.cb_batch_anon.isChecked(), 'category_map': {"写真": "401", "人像": "402", "风光": "403", "纪实": "404", "杂志": "405", "静物": "406", "儿童": "407", "超现实": "408", "美食": "409", "动物": "410", "人文": "411", "软件": "412", "图书": "413", "预设": "414", "教程": "415", "Special": "416"}, 'qb_url': self.input_qb_url.text().strip(), 'qb_user': self.input_qb_user.text().strip(), 'qb_pwd': self.input_qb_pwd.text().strip(), 'qb_category': self.input_qb_category.text().strip() if hasattr(self, 'input_qb_category') else "", 'qb_tags': self.input_qb_tags.text().strip() if hasattr(self, 'input_qb_tags') else "", 'add_to_qb': self.chk_qb_add.isChecked(), 'image_token': self.input_img_token.text().strip(), 'image_upload_api': self.input_img_upload_url.text().strip(), 'seed_delay': self.spin_delay.value(),
+            'pt_url': self.input_pt_url.text().strip() + ('/' if not self.input_pt_url.text().endswith('/') else ''), 'cookie': self.input_cookie.text().strip(), 'torrent_dir': self.get_abs_path(self.input_t_path.text()), 'seeding_dir': self.get_abs_path(self.input_s_path.text()), 'use_zip': self.cb_batch_zip.isChecked(), 'test_mode': self.cb_batch_test.isChecked(), 'anonymous': self.cb_batch_anon.isChecked(), 'category_map': {"写真": "401", "人像": "402", "风光": "403", "纪实": "404", "杂志": "405", "静物": "406", "儿童": "407", "超现实": "408", "美食": "409", "动物": "410", "人文": "411", "软件": "412", "图书": "413", "预设": "414", "教程": "415", "Special": "416"}, 'qb_url': self.input_qb_url.text().strip(), 'qb_user': self.input_qb_user.text().strip(), 'qb_pwd': self.input_qb_pwd.text().strip(), 'qb_category': self.input_qb_category.text().strip() if hasattr(self, 'input_qb_category') else "", 'qb_tags': self.input_qb_tags.text().strip() if hasattr(self, 'input_qb_tags') else "", 'add_to_qb': self.chk_qb_add.isChecked(), 'image_token': self.input_img_token.text().strip(), 'image_upload_api': self.input_img_upload_url.text().strip(), 'seed_delay': self.spin_delay.value(), 'reuse_existing': self.chk_reuse_existing.isChecked() if hasattr(self, 'chk_reuse_existing') else False, 'use_proxy': self.chk_proxy.isChecked() if hasattr(self, 'chk_proxy') else False, 'proxy_addr': self.input_proxy.text().strip() if hasattr(self, 'input_proxy') else '127.0.0.1:7897',
             'image_retry_count': self.spin_img_retry.value() if hasattr(self, 'spin_img_retry') else 3
         }
 
     def start_worker(self, mode):
         tasks = []
         for r in range(self.table.rowCount()):
-            preset_name = self.table.cellWidget(r, 2).currentText() if self.table.cellWidget(r, 2) else ""; row_preset = next((p for p in self.presets_data if p["name"] == preset_name), {})
-            tasks.append({'row': r, 'std_name': self.table.item(r, 1).text().strip(), 'folder_path': self.table.item(r, 4).text().strip(), 'thumb_path': self.table.item(r, 4).data(Qt.ItemDataRole.UserRole), 'category': self.table.cellWidget(r, 7).currentText(), 'tag_names': self.table.cellWidget(r, 8).get_checked_items(), 'intro': row_preset.get('intro', '')})
+            preset_name = self.table.cellWidget(r, 2).currentText() if self.table.cellWidget(r, 2) else ""; row_preset = self.find_preset(preset_name)
+            name_item = self.table.item(r, 1); path_item = self.table.item(r, 4)
+            cat_widget = self.table.cellWidget(r, 7); tag_widget = self.table.cellWidget(r, 8)
+            tasks.append({'row': r, 'std_name': name_item.text().strip() if name_item else '', 'folder_path': path_item.text().strip() if path_item else '', 'thumb_path': path_item.data(Qt.ItemDataRole.UserRole) if path_item else None, 'category': cat_widget.currentText() if cat_widget else '', 'tag_names': tag_widget.get_checked_items() if tag_widget else [], 'intro': row_preset.get('intro', '')})
         if not tasks: return QMessageBox.warning(self, "提示", "待处理列表为空，请先添加文件夹！")
         self.set_buttons_state(True); self.batch_progress.setValue(0)
         self.worker = BatchWorkerThread(mode, tasks, self.build_config_for_worker()); self.worker.log_signal.connect(self.log_msg); self.worker.progress_signal.connect(self.batch_progress.setValue); self.worker.cell_update_signal.connect(self.update_table_cell); self.worker.finished_signal.connect(self.worker_finished); self.worker.start()
 
     def worker_finished(self, success, total):
         self.set_buttons_state(False); QMessageBox.information(self, "任务完成", f"队列任务已全部处理完毕。\n成功次数: {success}/{total}")
+
+    def closeEvent(self, event):
+        if hasattr(self, 'worker') and self.worker is not None and self.worker.isRunning():
+            self.worker.stop()
+            if not self.worker.wait(8000):
+                self.log_msg("⚠️ 后台任务未能在 8 秒内停止，已取消关闭窗口。", "WARNING")
+                QMessageBox.warning(self, "提示", "后台任务仍在运行，请稍候再关闭窗口。")
+                event.ignore(); return
+        super().closeEvent(event)
 
     def force_stop_worker(self):
         if hasattr(self, 'worker') and self.worker.isRunning(): self.worker.stop(); self.log_msg("🛑 已强行停止后台线程。", "WARNING")
@@ -1516,9 +1808,14 @@ class PTUploaderFullGUI(PTUploaderBase):
         else: self.batch_auto_match_thumbs()
         self.start_worker('auto')
 
+    def get_proxy_config(self):
+        if not (hasattr(self, 'chk_proxy') and self.chk_proxy.isChecked()): return None
+        addr = self.input_proxy.text().strip() if hasattr(self, 'input_proxy') else ""
+        return normalize_proxy(addr or "127.0.0.1:7897")
+
     def test_pt_connection(self):
         try:
-            r = requests.get(self.input_pt_url.text().strip(), headers={"Cookie": self.input_cookie.text()}, timeout=5)
+            r = requests.get(self.input_pt_url.text().strip(), headers={"Cookie": self.input_cookie.text()}, timeout=5, proxies=self.get_proxy_config())
             if "login" in r.url: 
                 self.log_msg("PT站连接成功，但要求登录，可能 Cookie 已失效", "WARNING")
                 QMessageBox.warning(self, "提示", "能连通 PT 站，但被要求登录，请检查 Cookie 是否过期。")
@@ -1534,13 +1831,13 @@ class PTUploaderFullGUI(PTUploaderBase):
         url = self.input_img_upload_url.text().strip()
         if not url: return QMessageBox.warning(self, "警告", "请先填写图床上传API。")
         self.log_msg(f"正在测试图床连通性: {url} ...")
-        try:
-            resp = requests.get(url, timeout=10)
-            self.log_msg(f"✅ 图床服务器连接成功！状态码: {resp.status_code}", "SUCCESS")
-            QMessageBox.information(self, "成功", f"图床服务器可正常访问！\n(响应状态码: {resp.status_code})")
-        except Exception as e:
-            self.log_msg(f"❌ 图床连接失败: {e}", "ERROR")
-            QMessageBox.critical(self, "错误", f"无法连接到图床服务器，请检查网络策略或代理设置！\n\n报错信息: {e}")
+        status, detail = check_image_host_reachability(url, proxies=self.get_proxy_config())
+        if status == "reachable":
+            self.log_msg(f"✅ 图床服务器可达（HTTP 响应状态码: {detail}）", "SUCCESS")
+            QMessageBox.information(self, "成功", f"图床服务器可达（已收到 HTTP 响应）。\n(响应状态码: {detail})\n注意：此测试仅验证连通性，不代表该接口一定可接收上传。")
+        else:
+            self.log_msg(f"❌ 图床连接失败: {detail}", "ERROR")
+            QMessageBox.critical(self, "错误", f"无法连接到图床服务器，请检查网络策略或代理设置！\n\n报错信息: {detail}")
 
     def test_qb_connection(self):
         try:
@@ -1558,8 +1855,12 @@ class PTUploaderFullGUI(PTUploaderBase):
         if not email or not token_url: return
         self.log_msg("正在向图床请求获取 Token...")
         try:
-            response = requests.post(token_url, json={"email": email, "password": pwd}, timeout=10); data = response.json()
-            if (token := data.get("token") or data.get("data", {}).get("token")):
+            response = requests.post(token_url, json={"email": email, "password": pwd}, timeout=10, proxies=self.get_proxy_config()); data = response.json()
+            token = None
+            if isinstance(data, dict):
+                token = data.get("token")
+                if not token and isinstance(data.get("data"), dict): token = data["data"].get("token")
+            if token:
                 self.input_img_token.setText(token); QMessageBox.information(self, "成功", "已成功获取并填入 Token。")
             else: QMessageBox.warning(self, "警告", "获取失败，请检查账号密码。")
         except Exception as e: QMessageBox.critical(self, "错误", f"请求异常:\n{e}")
