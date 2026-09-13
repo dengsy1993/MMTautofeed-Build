@@ -406,7 +406,7 @@ class BatchWorkerThread(QThread):
                         file_size_mb = os.path.getsize(task['thumb_path']) / (1024 * 1024)
                         if file_size_mb > 5.0: self.emit_log(f"⚠️ 警告: 封面体积({file_size_mb:.2f}MB)超过 5MB 限制！", "WARNING")
                         
-                        retry_limit = self.config.get('image_retry_count', 3)
+                        retry_limit = self.config.get('image_retry_count', 5)
                         for retry in range(retry_limit):
                             try:
                                 with open(task['thumb_path'], 'rb') as f:
@@ -522,7 +522,7 @@ class BatchWorkerThread(QThread):
                         else: self.cell_update_signal.emit(row, 10, f"⚠️ 频控或异常", "#ff3b30"); self.emit_log(f"🚨 页面未返回有效的种子 ID。", "ERROR")
                 except Exception as e: self.cell_update_signal.emit(row, 10, "断网/超时", "#ff3b30"); self.emit_log(f"网络连接断开: {e}", "ERROR")
                 set_p(100)
-            if idx < total_tasks - 1 and self.config.get('seed_delay', 3) > 0 and self.mode in ['publish', 'auto']:
+            if idx < total_tasks - 1 and self.config.get('seed_delay', 5) > 0 and self.mode in ['publish', 'auto']:
                 delay_sec = self.config['seed_delay']; self.emit_log(f"⏳ 触发限流保护，等待 {delay_sec} 秒...", "INFO")
                 for wait_sec in range(delay_sec, 0, -1):
                     if not self.is_running: break
@@ -768,7 +768,7 @@ class PTUploaderBase(QMainWindow):
             "torrent_path": self.input_t_path.text(), "seeding_path": self.input_s_path.text(),
             "image_email": self.input_img_email.text(), "image_pwd": self.input_img_pwd.text(), "image_token": self.input_img_token.text(),
             "image_upload_api": self.input_img_upload_url.text(), "image_token_url": self.input_img_token_url.text(),
-            "image_retry_count": self.spin_img_retry.value() if hasattr(self, 'spin_img_retry') else 3,
+            "image_retry_count": self.spin_img_retry.value() if hasattr(self, 'spin_img_retry') else 5,
             "seed_delay": self.spin_delay.value(), "qb_url": self.input_qb_url.text(), "qb_user": self.input_qb_user.text(), "qb_pwd": self.input_qb_pwd.text(),
             "qb_auto_add": self.chk_qb_add.isChecked(), "anonymous": self.cb_batch_anon.isChecked(), "parse_mode": parse_mode,
             "clean_keywords": [self.list_kw.item(i).text() for i in range(self.list_kw.count())] if hasattr(self, 'list_kw') else [],
@@ -798,8 +798,8 @@ class PTUploaderBase(QMainWindow):
                 self.input_img_email.setText(config_data.get("image_email", "")); self.input_img_pwd.setText(config_data.get("image_pwd", "")); self.input_img_token.setText(config_data.get("image_token", ""))
                 self.input_img_upload_url.setText(config_data.get("image_upload_api") or "https://img.momentpt.top/api/v1/upload")
                 self.input_img_token_url.setText(config_data.get("image_token_url") or "https://img.momentpt.top/api/v1/tokens")
-                if hasattr(self, 'spin_img_retry'): self.spin_img_retry.setValue(config_data.get("image_retry_count", 3))
-                self.spin_delay.setValue(config_data.get("seed_delay", 3)); self.input_qb_url.setText(config_data.get("qb_url") or "http://127.0.0.1:8080")
+                if hasattr(self, 'spin_img_retry'): self.spin_img_retry.setValue(config_data.get("image_retry_count", 5))
+                self.spin_delay.setValue(config_data.get("seed_delay", 5)); self.input_qb_url.setText(config_data.get("qb_url") or "http://127.0.0.1:8080")
                 self.input_qb_user.setText(config_data.get("qb_user") or "admin"); self.input_qb_pwd.setText(config_data.get("qb_pwd", ""))
                 
                 if hasattr(self, 'input_qb_category'): self.input_qb_category.setText(config_data.get("qb_category", ""))
@@ -826,7 +826,7 @@ class PTUploaderBase(QMainWindow):
             except Exception as e: self.log_msg(f"读取配置文件失败: {e}", "ERROR")
         else:
             self.apply_theme("light"); self.input_pt_url.setText("https://www.momentpt.top/"); self.input_img_upload_url.setText("https://img.momentpt.top/api/v1/upload"); self.input_img_token_url.setText("https://img.momentpt.top/api/v1/tokens")
-            self.input_t_path.setText("./torrents"); self.input_s_path.setText("./seeding"); self.spin_delay.setValue(3); self.input_qb_url.setText("http://127.0.0.1:8080"); self.input_qb_user.setText("admin")
+            self.input_t_path.setText("./torrents"); self.input_s_path.setText("./seeding"); self.spin_delay.setValue(5); self.input_qb_url.setText("http://127.0.0.1:8080"); self.input_qb_user.setText("admin")
             self.chk_qb_add.setChecked(True); self.rb_simple.setChecked(True); self.preset_font_size = 10
             if hasattr(self, 'chk_reuse_existing'): self.chk_reuse_existing.setChecked(False)
             if hasattr(self, 'chk_proxy'): self.chk_proxy.setChecked(False)
@@ -977,7 +977,8 @@ class PTUploaderFullGUI(PTUploaderBase):
             item.setForeground(QBrush(QColor(color_hex)))
 
     def setup_batch_upload_tab(self):
-        layout = QVBoxLayout(self.tab_batch)
+        batch_scroll = QScrollArea(); batch_scroll.setWidgetResizable(True); batch_scroll.setStyleSheet("QScrollArea { border: none; }")
+        batch_page = QWidget(); layout = QVBoxLayout(batch_page)
         group_top = QGroupBox("第一步：选择发布预设与基础设定"); h_top = QHBoxLayout()
         self.preset_combo = QComboBox(); self.preset_combo.currentIndexChanged.connect(self.preset_changed); self.preset_combo.setMinimumWidth(240); self.preset_combo.setToolTip("选择一个“模板”，它决定了标题里的摄影/模特、简介、默认分类和标签。")
         h_top.addWidget(QLabel("发布预设:")); h_top.addWidget(self.preset_combo)
@@ -989,7 +990,7 @@ class PTUploaderFullGUI(PTUploaderBase):
         h_top.addWidget(self.cb_batch_anon); h_top.addWidget(self.cb_batch_zip); h_top.addWidget(self.cb_batch_test)
         v_top = QVBoxLayout(); v_top.addLayout(h_top)
         v_top.addWidget(self.create_hint_label("💡 这里决定“默认模板”和基本选项：先在【发布预设】里选好模板；需要新模板就点【⚙ 管理预设】。下面灰框会显示当前预设的摄影/模特/分类/标签，方便你核对。", "primary"))
-        self.preset_info_label = QTextEdit(); self.preset_info_label.setFixedHeight(80); self.preset_info_label.setReadOnly(True); self.preset_info_label.setToolTip("当前所选预设的详情预览。")
+        self.preset_info_label = QTextEdit(); self.preset_info_label.setFixedHeight(60); self.preset_info_label.setReadOnly(True); self.preset_info_label.setToolTip("当前所选预设的详情预览。")
         v_top.addWidget(self.preset_info_label); group_top.setLayout(v_top); layout.addWidget(group_top, 0)
 
         group_mid = QGroupBox("第二步：添加资源文件夹并自动提取名称/数量"); v_mid = QVBoxLayout()
@@ -1003,7 +1004,7 @@ class PTUploaderFullGUI(PTUploaderBase):
         b_clr = QPushButton("🗑 清空列表"); b_clr.setStyleSheet("background:#ff3b30; color:white; border:none;"); b_clr.setToolTip("清空整个待发布列表。"); b_clr.clicked.connect(lambda: self.table.setRowCount(0))
         h_toolbar.addWidget(b_add); h_toolbar.addWidget(b_scn); h_toolbar.addWidget(b_rn); h_toolbar.addWidget(b_sandbox); h_toolbar.addWidget(b_del); h_toolbar.addStretch(); h_toolbar.addWidget(b_clr); v_mid.addLayout(h_toolbar)
 
-        self.table = QTableWidget(0, 12); self.table.verticalHeader().setDefaultSectionSize(34)
+        self.table = QTableWidget(0, 12); self.table.setMinimumHeight(180); self.table.verticalHeader().setDefaultSectionSize(34)
         self.table.setHorizontalHeaderLabels(["原始文件夹名", "最终种子名称", "应用预设", "锁定", "物理路径", "P/V数", "年份", "分类", "附加标签", "种子", "状态", "操作"])
         for _i, _tip in enumerate([
             "导入时的原始文件夹名（参考，不可改）",
@@ -1074,10 +1075,13 @@ class PTUploaderFullGUI(PTUploaderBase):
         self.batch_progress = QProgressBar(); self.batch_progress.setValue(0); v_bot.addWidget(self.batch_progress)
 
         h_log_header = QHBoxLayout(); h_log_header.addWidget(QLabel("📝 实时进度（这里会显示每一步的结果和报错）")); h_log_header.addStretch()
-        self.batch_log = QTextEdit(); self.batch_log.setObjectName("BatchLogView"); self.batch_log.setFixedHeight(120); self.batch_log.setReadOnly(True)
+        self.batch_log = QTextEdit(); self.batch_log.setObjectName("BatchLogView"); self.batch_log.setMinimumHeight(90); self.batch_log.setFixedHeight(100); self.batch_log.setReadOnly(True)
         btn_clr_batch_log = QPushButton("🗑 清空"); btn_clr_batch_log.setStyleSheet("color:#ff3b30; background:transparent; border:none;"); btn_clr_batch_log.setCursor(Qt.CursorShape.PointingHandCursor); btn_clr_batch_log.clicked.connect(self.batch_log.clear)
         h_log_header.addWidget(btn_clr_batch_log); v_bot.addLayout(h_log_header); v_bot.addWidget(self.batch_log); group_bot.setLayout(v_bot); layout.addWidget(group_bot, 0)
-        
+
+        batch_scroll.setWidget(batch_page)
+        batch_outer = QVBoxLayout(self.tab_batch); batch_outer.setContentsMargins(0, 0, 0, 0); batch_outer.addWidget(batch_scroll)
+
         self.refresh_main_preset_combo()
 
     def setup_sandbox_tab(self):
@@ -1301,12 +1305,12 @@ class PTUploaderFullGUI(PTUploaderBase):
         h_img_btns = QHBoxLayout(); h_img_btns.addWidget(b_gt); h_img_btns.addWidget(b_test_img); fn.addRow("", h_img_btns)
         
         # 增加上传重试控制控件
-        hr2 = QHBoxLayout(); hr2.addWidget(QLabel("图床上传失败时重试次数:")); self.spin_img_retry = QSpinBox(); self.spin_img_retry.setRange(1, 10); hr2.addWidget(self.spin_img_retry); hr2.addWidget(QLabel("次 (默认3次)")); hr2.addStretch(); fn.addRow("图床容错机制:", hr2)
+        hr2 = QHBoxLayout(); hr2.addWidget(QLabel("图床上传失败时重试次数:")); self.spin_img_retry = QSpinBox(); self.spin_img_retry.setRange(1, 10); self.spin_img_retry.setValue(5); hr2.addWidget(self.spin_img_retry); hr2.addWidget(QLabel("次 (默认5次)")); hr2.addStretch(); fn.addRow("图床容错机制:", hr2)
         
-        hr = QHBoxLayout(); hr.addWidget(QLabel("自动发种时，两个种子间隔时间:")); self.spin_delay = QSpinBox(); self.spin_delay.setMaximum(9999); hr.addWidget(self.spin_delay); hr.addWidget(QLabel("秒 (默认3秒，为0时不限制)")); hr.addStretch(); fn.addRow("发种限流保护:", hr)
+        hr = QHBoxLayout(); hr.addWidget(QLabel("自动发种时，两个种子间隔时间:")); self.spin_delay = QSpinBox(); self.spin_delay.setMaximum(9999); self.spin_delay.setValue(5); hr.addWidget(self.spin_delay); hr.addWidget(QLabel("秒 (默认5秒，为0时不限制)")); hr.addStretch(); fn.addRow("发种限流保护:", hr)
         hp = QHBoxLayout(); self.chk_proxy = QCheckBox("启用网络代理"); self.chk_proxy.setChecked(False); self.chk_proxy.setToolTip("使用 VPN / 代理（如 Clash、v2ray）时勾选，否则 PT 站/图床请求可能失败。默认关闭。")
         self.input_proxy = QLineEdit(); self.input_proxy.setText("127.0.0.1:7897"); self.input_proxy.setPlaceholderText("例如 127.0.0.1:7897")
-        hp.addWidget(self.chk_proxy); hp.addWidget(QLabel("代理地址:")); hp.addWidget(self.input_proxy); hp.addWidget(QLabel("(默认 127.0.0.1:7897)")); hp.addStretch(); fn.addRow("网络代理:", hp)
+        hp.addWidget(self.chk_proxy); hp.addWidget(QLabel("代理地址:")); hp.addWidget(self.input_proxy); hp.addStretch(); fn.addRow("网络代理:", hp)
         gn.setLayout(fn); layout.addWidget(gn)
         ga = QGroupBox("⚙️ 防误抓拦截规则与自动化配置"); fa = QFormLayout(); fa.setSpacing(14)
         
@@ -1766,7 +1770,7 @@ class PTUploaderFullGUI(PTUploaderBase):
     def build_config_for_worker(self):
         return {
             'pt_url': self.input_pt_url.text().strip() + ('/' if not self.input_pt_url.text().endswith('/') else ''), 'cookie': self.input_cookie.text().strip(), 'torrent_dir': self.get_abs_path(self.input_t_path.text()), 'seeding_dir': self.get_abs_path(self.input_s_path.text()), 'use_zip': self.cb_batch_zip.isChecked(), 'test_mode': self.cb_batch_test.isChecked(), 'anonymous': self.cb_batch_anon.isChecked(), 'category_map': {"写真": "401", "人像": "402", "风光": "403", "纪实": "404", "杂志": "405", "静物": "406", "儿童": "407", "超现实": "408", "美食": "409", "动物": "410", "人文": "411", "软件": "412", "图书": "413", "预设": "414", "教程": "415", "Special": "416"}, 'qb_url': self.input_qb_url.text().strip(), 'qb_user': self.input_qb_user.text().strip(), 'qb_pwd': self.input_qb_pwd.text().strip(), 'qb_category': self.input_qb_category.text().strip() if hasattr(self, 'input_qb_category') else "", 'qb_tags': self.input_qb_tags.text().strip() if hasattr(self, 'input_qb_tags') else "", 'add_to_qb': self.chk_qb_add.isChecked(), 'image_token': self.input_img_token.text().strip(), 'image_upload_api': self.input_img_upload_url.text().strip(), 'seed_delay': self.spin_delay.value(), 'reuse_existing': self.chk_reuse_existing.isChecked() if hasattr(self, 'chk_reuse_existing') else False, 'use_proxy': self.chk_proxy.isChecked() if hasattr(self, 'chk_proxy') else False, 'proxy_addr': self.input_proxy.text().strip() if hasattr(self, 'input_proxy') else '127.0.0.1:7897',
-            'image_retry_count': self.spin_img_retry.value() if hasattr(self, 'spin_img_retry') else 3
+            'image_retry_count': self.spin_img_retry.value() if hasattr(self, 'spin_img_retry') else 5
         }
 
     def start_worker(self, mode):
