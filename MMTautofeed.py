@@ -990,7 +990,7 @@ class PTUploaderFullGUI(PTUploaderBase):
         h_top.addWidget(self.cb_batch_anon); h_top.addWidget(self.cb_batch_zip); h_top.addWidget(self.cb_batch_test)
         v_top = QVBoxLayout(); v_top.addLayout(h_top)
         v_top.addWidget(self.create_hint_label("💡 这里决定“默认模板”和基本选项：先在【发布预设】里选好模板；需要新模板就点【⚙ 管理预设】。下面灰框会显示当前预设的摄影/模特/分类/标签，方便你核对。", "primary"))
-        self.preset_info_label = QTextEdit(); self.preset_info_label.setFixedHeight(60); self.preset_info_label.setReadOnly(True); self.preset_info_label.setToolTip("当前所选预设的详情预览。")
+        self.preset_info_label = QTextEdit(); self.preset_info_label.setFixedHeight(50); self.preset_info_label.setReadOnly(True); self.preset_info_label.setToolTip("当前所选预设的详情预览。")
         v_top.addWidget(self.preset_info_label); group_top.setLayout(v_top); layout.addWidget(group_top, 0)
 
         group_mid = QGroupBox("第二步：添加资源文件夹并自动提取名称/数量"); v_mid = QVBoxLayout()
@@ -1004,7 +1004,7 @@ class PTUploaderFullGUI(PTUploaderBase):
         b_clr = QPushButton("🗑 清空列表"); b_clr.setStyleSheet("background:#ff3b30; color:white; border:none;"); b_clr.setToolTip("清空整个待发布列表。"); b_clr.clicked.connect(lambda: self.table.setRowCount(0))
         h_toolbar.addWidget(b_add); h_toolbar.addWidget(b_scn); h_toolbar.addWidget(b_rn); h_toolbar.addWidget(b_sandbox); h_toolbar.addWidget(b_del); h_toolbar.addStretch(); h_toolbar.addWidget(b_clr); v_mid.addLayout(h_toolbar)
 
-        self.table = QTableWidget(0, 12); self.table.setMinimumHeight(180); self.table.verticalHeader().setDefaultSectionSize(34)
+        self.table = QTableWidget(0, 12); self.table.setMinimumHeight(90); self.table.verticalHeader().setDefaultSectionSize(34)
         self.table.setHorizontalHeaderLabels(["原始文件夹名", "最终种子名称", "应用预设", "锁定", "物理路径", "P/V数", "年份", "分类", "附加标签", "种子", "状态", "操作"])
         for _i, _tip in enumerate([
             "导入时的原始文件夹名（参考，不可改）",
@@ -1044,10 +1044,9 @@ class PTUploaderFullGUI(PTUploaderBase):
         self.chk_auto_cover.setToolTip("勾选后，点【一键全自动】时会先去封面输出目录把拼好的封面抓过来用。")
         h_cover.addWidget(b_auto_img); h_cover.addWidget(b_man_img); h_cover.addWidget(b_jump_cover); h_cover.addWidget(self.chk_auto_cover); h_cover.addStretch()
         v_bot.addLayout(h_cover)
-        v_bot.addWidget(self.create_hint_label("💡 封面怎么弄：常见做法是先去【🖼️ 封面拼图台】给每个资源拼好封面并保存到一个文件夹，然后回到这里点【自动匹配本地封面】；也可以勾选上面的选项，让【一键全自动】自动去抓。跳过这一步也没关系。", "primary"))
+        v_bot.addWidget(self.create_hint_label("💡 可跳过：先去【封面拼图台】拼好封面，再点【自动匹配本地封面】，或勾选上一项让全自动去抓。", "primary"))
 
         # 3.2 分步执行
-        v_bot.addWidget(self.get_hline())
         v_bot.addWidget(QLabel("3.2 分步执行（只想单独重跑某一步时用；两步通常要按顺序做）"))
         h_exec2 = QHBoxLayout()
         self.btn_make = QPushButton("📦 第1步：打包并制作种子"); self.btn_make.setStyleSheet("background:#34c759; color:white; border:none; padding:7px 12px; border-radius:4px;")
@@ -1060,7 +1059,6 @@ class PTUploaderFullGUI(PTUploaderBase):
         v_bot.addLayout(h_exec2)
 
         # 3.3 一键全自动 + 停止
-        v_bot.addWidget(self.get_hline())
         h_main_btn = QHBoxLayout()
         self.btn_auto = QPushButton("🚀 一键全自动打包发布（新手推荐）"); self.btn_auto.setStyleSheet("background: #007aff; color: white; font-size: 14px; padding: 10px 24px; border: none; border-radius: 5px;")
         self.btn_auto.setToolTip("自动依次完成：找封面 ➜ 打包制种 ➜ 上传图床 ➜ 发布 PT ➜ 推送 qB 做种。")
@@ -1070,12 +1068,12 @@ class PTUploaderFullGUI(PTUploaderBase):
         self.btn_stop.setEnabled(False); self.btn_stop.clicked.connect(self.force_stop_worker)
         h_main_btn.addWidget(self.btn_auto, 3); h_main_btn.addWidget(self.btn_stop)
         v_bot.addLayout(h_main_btn)
-        v_bot.addWidget(self.create_hint_label("💡 新手建议：直接用【🚀 一键全自动打包发布】，它会按 找封面 ➜ 打包制种 ➜ 上传图床 ➜ 发布表单 ➜ 推送 qB 做种的顺序全部做好。只有想单独重做某一步时，才用上面的【3.2 分步执行】。", "primary"))
+        v_bot.addWidget(self.create_hint_label("💡 新手直接用【一键全自动】即可；只在想单独重做某一步时，才用上面的【3.2 分步执行】。", "primary"))
 
         self.batch_progress = QProgressBar(); self.batch_progress.setValue(0); v_bot.addWidget(self.batch_progress)
 
         h_log_header = QHBoxLayout(); h_log_header.addWidget(QLabel("📝 实时进度（这里会显示每一步的结果和报错）")); h_log_header.addStretch()
-        self.batch_log = QTextEdit(); self.batch_log.setObjectName("BatchLogView"); self.batch_log.setMinimumHeight(90); self.batch_log.setFixedHeight(100); self.batch_log.setReadOnly(True)
+        self.batch_log = QTextEdit(); self.batch_log.setObjectName("BatchLogView"); self.batch_log.setMinimumHeight(70); self.batch_log.setFixedHeight(80); self.batch_log.setReadOnly(True)
         btn_clr_batch_log = QPushButton("🗑 清空"); btn_clr_batch_log.setStyleSheet("color:#ff3b30; background:transparent; border:none;"); btn_clr_batch_log.setCursor(Qt.CursorShape.PointingHandCursor); btn_clr_batch_log.clicked.connect(self.batch_log.clear)
         h_log_header.addWidget(btn_clr_batch_log); v_bot.addLayout(h_log_header); v_bot.addWidget(self.batch_log); group_bot.setLayout(v_bot); layout.addWidget(group_bot, 0)
 
