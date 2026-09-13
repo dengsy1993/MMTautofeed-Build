@@ -58,7 +58,9 @@ THEME_LIGHT = {
     'danger': '#ef4444', 'danger_hover': '#dc2626',
     'purple': '#7c3aed', 'purple_hover': '#6d28d9',
     'input_bg': '#ffffff', 'input_border': '#cdd5e0',
-    'table_alt': '#f7f9fc', 'table_grid': '#e6ebf2', 'header_bg': '#f3f6fa', 'header_text': '#64748b',
+    'table_bg': 'rgba(255, 255, 255, 205)',   # 表格底：比方框实、比输入框略透
+    'table_alt': 'rgba(247, 249, 252, 130)',  # 表格隔行色
+    'table_grid': '#e6ebf2', 'header_bg': '#f3f6fa', 'header_text': '#64748b',
     'console_bg': '#0b1220', 'console_text': '#4ade80',
     'selection_bg': '#2563eb', 'selection_text': '#ffffff',
     'scroll': '#c3ccda', 'scroll_hover': '#9aa6b8',
@@ -93,7 +95,9 @@ THEME_DARK = {
     'danger': '#f87171', 'danger_hover': '#ef4444',
     'purple': '#a78bfa', 'purple_hover': '#8b5cf6',
     'input_bg': '#0d131c', 'input_border': '#333d4d',
-    'table_alt': '#1a212c', 'table_grid': '#2a3342', 'header_bg': '#1b222e', 'header_text': '#8b9ab0',
+    'table_bg': 'rgba(26, 33, 44, 205)',      # 表格底：比方框实、比输入框略透
+    'table_alt': 'rgba(30, 38, 50, 130)',     # 表格隔行色
+    'table_grid': '#2a3342', 'header_bg': '#1b222e', 'header_text': '#8b9ab0',
     'console_bg': '#070b12', 'console_text': '#4ade80',
     'selection_bg': '#2563eb', 'selection_text': '#ffffff',
     'scroll': '#3a4457', 'scroll_hover': '#4c5870',
@@ -160,7 +164,7 @@ QComboBox QLineEdit { border: none; background: transparent; padding: 0px; min-h
 QComboBox QAbstractItemView::item:selected, QListView::item:selected { background-color: %(primary)s; color: %(primary_text)s; }
 
 /* ---------- 列表 ---------- */
-QListWidget { background-color: %(input_bg)s; color: %(text)s; border: 1px solid %(input_border)s; border-radius: 10px; padding: 6px; outline: none; }
+QListWidget { background-color: %(field_bg)s; color: %(text)s; border: 1px solid %(input_border)s; border-radius: 10px; padding: 6px; outline: none; }
 QListWidget::item { background-color: %(surface2)s; border: 1px solid %(border)s; border-radius: 6px; padding: 6px 10px; margin: 3px 2px; color: %(text)s; }
 QListWidget::item:selected { background-color: %(primary)s; color: %(primary_text)s; border-color: %(primary)s; }
 
@@ -192,7 +196,7 @@ QPushButton#HeroButton { font-size: 15px; font-weight: 700; padding: 12px 24px; 
 QPushButton:disabled { background-color: %(disabled_bg)s; color: %(disabled_text)s; border: 1px solid %(border)s; }
 
 /* ---------- 表格 ---------- */
-QTableWidget { background-color: %(surface)s; alternate-background-color: %(table_alt)s; color: %(text)s; gridline-color: %(table_grid)s; border: 1px solid %(border)s; border-radius: 10px; }
+QTableWidget { background-color: %(table_bg)s; alternate-background-color: %(table_alt)s; color: %(text)s; gridline-color: %(table_grid)s; border: 1px solid %(border)s; border-radius: 10px; }
 QTableWidget::item { padding: 4px 6px; }
 QTableWidget::item:selected { background-color: %(selection_bg)s; color: %(selection_text)s; }
 QHeaderView::section { background-color: %(header_bg)s; color: %(header_text)s; padding: 9px 8px; border: none; border-right: 1px solid %(border)s; border-bottom: 1px solid %(border)s; font-weight: 600; }
@@ -218,7 +222,7 @@ QPlainTextEdit#CssEditor { background-color: %(console_bg)s; color: %(console_te
 QLabel#BgPreview { border: 1px dashed %(border)s; border-radius: 10px; color: %(text_muted)s; background-color: %(surface2)s; }
 /* 批量页的进度日志较矮，内边距收小，保证能完整显示约 3 行 */
 QTextEdit#BatchLogView { padding: 6px 8px; }
-QTextEdit#PresetInfo { background-color: %(surface2)s; color: %(text)s; border: 1px dashed %(border)s; border-radius: 8px; padding: 8px 10px; }
+QTextEdit#PresetInfo { background-color: %(field_bg)s; color: %(text)s; border: 1px dashed %(border)s; border-radius: 8px; padding: 8px 10px; }
 QGraphicsView#CollageView { border: 1px solid %(border)s; border-radius: 10px; }
 
 /* ---------- 进度条 ---------- */
@@ -1129,8 +1133,25 @@ class PTUploaderBase(QMainWindow):
                 data_dir = os.path.dirname(sys.executable)
         else:
             data_dir = os.path.dirname(os.path.abspath(__file__))
-        os.makedirs(data_dir, exist_ok=True)
-        return data_dir
+        try:
+            os.makedirs(data_dir, exist_ok=True)
+            # 目录不可写（如 exe 装在 Program Files）时退回用户目录，保证配置能保存
+            return data_dir if os.access(data_dir, os.W_OK) else self._user_fallback_dir()
+        except Exception:
+            return self._user_fallback_dir()
+
+    def _user_fallback_dir(self):
+        """数据目录不可写时的兜底位置（跨平台）。"""
+        if sys.platform == 'darwin':
+            base = os.path.join(os.path.expanduser('~'), 'Library', 'Application Support')
+        elif sys.platform == 'win32':
+            base = os.environ.get('APPDATA') or os.path.join(os.path.expanduser('~'), 'AppData', 'Roaming')
+        else:
+            base = os.path.join(os.path.expanduser('~'), '.local', 'share')
+        d = os.path.join(base, 'MMTautofeed')
+        try: os.makedirs(d, exist_ok=True)
+        except Exception: pass
+        return d
 
     def get_user_dir(self):
         """用户数据统一目录（config.json / presets.json / logs / 背景图都放这里）。
