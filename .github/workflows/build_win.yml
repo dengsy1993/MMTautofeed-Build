@@ -24,21 +24,23 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller PyQt6 requests torf qbittorrent-api
 
-      # 用 --onedir：启动时无需解压，比 --onefile 快很多，程序打开更跟手。
+      # 单文件 exe（--onefile）：产物只有一个 MMTautofeed.exe，便于分发。
+      # 注意：单文件启动时会先自解压，所以打开比 onedir 慢几秒，这是打包机制的固有代价。
       # --icon 设置 exe 文件图标；--add-data 把 ico 打进包，运行期窗口/任务栏图标才完整。
-      - name: 执行 PyInstaller 打包（onedir，启动更快）
+      - name: 执行 PyInstaller 打包（单文件 exe）
         run: >
-          pyinstaller --noconfirm --onedir --windowed
+          pyinstaller --noconfirm --clean --onefile --windowed
           --icon "app_icon.ico"
           --add-data "app_icon.ico;."
           --hidden-import=torf --hidden-import=qbittorrentapi
+          --exclude-module tkinter --exclude-module unittest --exclude-module pydoc
+          --exclude-module PyQt6.QtQml --exclude-module PyQt6.QtQuick
+          --exclude-module PyQt6.QtWebEngineCore --exclude-module PyQt6.QtMultimedia
+          --exclude-module PyQt6.QtSql --exclude-module PyQt6.QtTest
           --name "MMTautofeed" MMTautofeed.py
-
-      - name: 压缩为 ZIP
-        run: Compress-Archive -Path dist/MMTautofeed -DestinationPath dist/MMTautofeed_Windows.zip
 
       - name: 上传成品
         uses: actions/upload-artifact@v4
         with:
           name: MMTautofeed_Windows_Package
-          path: dist/MMTautofeed_Windows.zip
+          path: dist/MMTautofeed.exe
