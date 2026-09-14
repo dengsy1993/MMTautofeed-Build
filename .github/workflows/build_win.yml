@@ -24,18 +24,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller PyQt6 requests torf qbittorrent-api
 
-      # 关键：--icon 设置 exe 文件本身的图标；--add-data 把 ico 打进包内，
-      # 这样运行时 setWindowIcon 也能找到，窗口/任务栏图标才完整。
-      - name: 执行 PyInstaller 打包（含 exe 图标）
+      # 用 --onedir：启动时无需解压，比 --onefile 快很多，程序打开更跟手。
+      # --icon 设置 exe 文件图标；--add-data 把 ico 打进包，运行期窗口/任务栏图标才完整。
+      - name: 执行 PyInstaller 打包（onedir，启动更快）
         run: >
-          pyinstaller --noconfirm --onefile --windowed
+          pyinstaller --noconfirm --onedir --windowed
           --icon "app_icon.ico"
           --add-data "app_icon.ico;."
           --hidden-import=torf --hidden-import=qbittorrentapi
           --name "MMTautofeed" MMTautofeed.py
 
+      - name: 压缩为 ZIP
+        run: Compress-Archive -Path dist/MMTautofeed -DestinationPath dist/MMTautofeed_Windows.zip
+
       - name: 上传成品
         uses: actions/upload-artifact@v4
         with:
           name: MMTautofeed_Windows_Package
-          path: dist/MMTautofeed.exe
+          path: dist/MMTautofeed_Windows.zip
