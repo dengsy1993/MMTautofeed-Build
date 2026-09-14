@@ -47,13 +47,12 @@
 
 ### 2.1 Windows（推荐新手）
 
-1. 到仓库的 **Actions 产物 / Releases** 下载 `MMTautofeed_Windows_Package`（zip）；
-2. 解压得到 `MMTautofeed` 文件夹，双击里面的 `MMTautofeed.exe` 运行
-   （请让 exe 与同目录其他文件保持在一起，不要单独把 exe 拷走）；
+1. 到仓库的 **Actions 产物 / Releases** 下载 `MMTautofeed_Windows_Package`；
+2. 解压得到 **单个** `MMTautofeed.exe`，双击运行（可放任意位置）；
 3. 首次打开先做 [三、偏好设置](#三功能区偏好设置先配置一次)。
 
 > 打包版已内置全部依赖，无需安装 Python。
-> 采用 **onedir** 打包（启动时不解压），打开速度比单文件 exe 更快。
+> 说明：单文件 exe 打开时会先自解压，所以启动需要几秒——这是单文件打包的固有机制，与程序本身无关。
 
 ### 2.2 macOS
 
@@ -338,10 +337,11 @@ A：偏好设置里有 **🎨 自定义样式(CSS/QSS)** 与 **🖼️ 背景图
 
 仓库内置 GitHub Actions（在 Actions 页面手动触发 `workflow_dispatch`）：
 
-- `.github/workflows/build_win.yml`：Windows 打包（PyInstaller，**onedir**，启动更快）
-  - `--onedir --windowed --icon "app_icon.ico" --add-data "app_icon.ico;."`
+- `.github/workflows/build_win.yml`：Windows 打包（PyInstaller，**单文件 exe**）
+  - `--onefile --windowed --icon "app_icon.ico" --add-data "app_icon.ico;."`
   - `--icon` 设置 exe 文件图标；`--add-data` 让运行期也能读到图标（窗口/任务栏图标完整）；
-  - 产物为 `MMTautofeed_Windows.zip`，解压后运行文件夹内的 `MMTautofeed.exe`。
+  - 产物为单个 `MMTautofeed.exe`；
+  - 若更在意启动速度，可把 `--onefile` 改为 `--onedir`（产物变文件夹，启动更快）。
 - `.github/workflows/build_mac.yml`：macOS 打包（`--onedir`，输出标准 `.app`，单 Dock 图标）。
 
 产物：
