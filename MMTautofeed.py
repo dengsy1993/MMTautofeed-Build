@@ -58,10 +58,10 @@ THEME_LIGHT = {
     'danger': '#ef4444', 'danger_hover': '#dc2626',
     'purple': '#7c3aed', 'purple_hover': '#6d28d9',
     'input_bg': '#ffffff', 'input_border': '#cdd5e0',
-    'table_bg': 'rgba(255, 255, 255, 205)',   # 表格底：比方框实、比输入框略透
-    'table_alt': 'rgba(247, 249, 252, 130)',  # 表格隔行色
+    'table_bg': 'rgba(255, 255, 255, 180)',   # 表格底：与输入框一致的透明度
+    'table_alt': 'rgba(247, 249, 252, 110)',  # 表格隔行色
     'table_grid': '#e6ebf2', 'header_bg': '#f3f6fa', 'header_text': '#64748b',
-    'console_bg': '#0b1220', 'console_text': '#4ade80',
+    'console_bg': 'rgba(11, 18, 32, 220)', 'console_text': '#4ade80',
     'selection_bg': '#2563eb', 'selection_text': '#ffffff',
     'scroll': '#c3ccda', 'scroll_hover': '#9aa6b8',
     'tab_bg': '#e2e8f1', 'tab_text': '#5b6b80',
@@ -95,10 +95,10 @@ THEME_DARK = {
     'danger': '#f87171', 'danger_hover': '#ef4444',
     'purple': '#a78bfa', 'purple_hover': '#8b5cf6',
     'input_bg': '#0d131c', 'input_border': '#333d4d',
-    'table_bg': 'rgba(26, 33, 44, 205)',      # 表格底：比方框实、比输入框略透
-    'table_alt': 'rgba(30, 38, 50, 130)',     # 表格隔行色
+    'table_bg': 'rgba(13, 19, 28, 220)',      # 表格底：与输入框一致的透明度
+    'table_alt': 'rgba(30, 38, 50, 110)',     # 表格隔行色
     'table_grid': '#2a3342', 'header_bg': '#1b222e', 'header_text': '#8b9ab0',
-    'console_bg': '#070b12', 'console_text': '#4ade80',
+    'console_bg': 'rgba(7, 11, 18, 220)', 'console_text': '#4ade80',
     'selection_bg': '#2563eb', 'selection_text': '#ffffff',
     'scroll': '#3a4457', 'scroll_hover': '#4c5870',
     'tab_bg': '#1b222e', 'tab_text': '#8b9ab0',
@@ -451,7 +451,9 @@ class CollageView(QGraphicsView):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff); self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
         
-        bg_rect = self._scene.addRect(0, 0, 1200, 1680, pen=QPen(Qt.PenStyle.NoPen), brush=QColor("#141414"))
+        # 画布底改为透明：屏幕上透出主题底色（明/暗一致），导出时 render_to_file 会填充深色底，
+        # 因此封面成品依旧保持原来的深色风格。
+        bg_rect = self._scene.addRect(0, 0, 1200, 1680, pen=QPen(Qt.PenStyle.NoPen), brush=QColor(0, 0, 0, 0))
         bg_rect.setZValue(-1)
 
         polys = [
@@ -575,6 +577,13 @@ class CollageView(QGraphicsView):
             factor = 1.1 if delta > 0 else 0.9; self.scale(factor, factor)
             event.accept()
         else: super().wheelEvent(event)
+
+    def apply_theme_color(self, color):
+        """设置画布背景色（跟随主题明暗），导出成品不受影响（仍为深色）。"""
+        try:
+            self.setBackgroundBrush(QBrush(color))
+        except Exception:
+            pass
 
     def render_to_file(self, filepath):
         self._scene.clearSelection()
@@ -1275,6 +1284,12 @@ class PTUploaderBase(QMainWindow):
         self.refresh_hint_colors()
         if hasattr(self, '_update_theme_button'):
             self._update_theme_button()  # 顶部按钮图标随主题变化
+        try:
+            if hasattr(self, 'lbl_preview'):
+                _c = QColor(self.theme.get('surface', '#ffffff')); _c.setAlpha(170)
+                self.lbl_preview.apply_theme_color(_c)  # 封面画布底色跟随主题
+        except Exception:
+            pass
 
         # 自定义规则行（RuleWidget）会记录自身主题，便于局部重绘
         if hasattr(self, 'layout_rules'):
@@ -2047,7 +2062,7 @@ class PTUploaderFullGUI(PTUploaderBase):
         self.lbl_preview.image_swapped.connect(self.cover_on_image_swapped)
         v_prev.addWidget(self.lbl_preview, 1)
         
-        self.cover_progress = QProgressBar(); self.cover_progress.setValue(0); self.cover_progress.setFixedHeight(12); v_prev.addWidget(self.cover_progress)
+        self.cover_progress = QProgressBar(); self.cover_progress.setValue(0); self.cover_progress.setFixedHeight(16); v_prev.addWidget(self.cover_progress)
         self.cover_log = QTextEdit(); self.cover_log.setObjectName("CoverLogView"); self.cover_log.setReadOnly(True); self.cover_log.setFixedHeight(60); v_prev.addWidget(self.cover_log)
         
         h_actions1 = QHBoxLayout()
