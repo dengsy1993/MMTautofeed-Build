@@ -301,6 +301,18 @@ def sanitize_filename(name, max_len=150):
     if len(name) > max_len: name = name[:max_len].rstrip(' .')
     return name
 
+# 已经是压缩格式的媒体文件：ZIP 里直接存储（再压缩几乎没收益，还拖慢打包）
+ZIP_STORE_EXTS = (
+    '.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.avif',
+    '.mp4', '.mkv', '.avi', '.mov', '.ts', '.m4v', '.wmv', '.flv', '.webm',
+    '.mp3', '.flac', '.aac', '.m4a', '.zip', '.rar', '.7z', '.gz', '.xz', '.bz2',
+)
+
+def zip_entry_compress_type(filename):
+    """按扩展名决定 ZIP 条目的压缩方式：已压缩媒体用 Stored，其余用 Deflate。"""
+    ext = os.path.splitext(str(filename))[1].lower()
+    return zipfile.ZIP_STORED if ext in ZIP_STORE_EXTS else zipfile.ZIP_DEFLATED
+
 def build_bbcode_img(img_url, thumb_path, logger=None):
     if img_url: return f"[img]{img_url}[/img]"
     if logger: logger("图床未配置或上传失败，封面将显示占位提示。", "WARNING")
@@ -687,12 +699,14 @@ class BatchWorkerThread(QThread):
                             if reuse and find_existing_file(zip_path):
                                 zip_path = find_existing_file(zip_path); target_path = zip_path; self.emit_log(f"♻️ 复用已存在的 ZIP: {os.path.basename(zip_path)}", "INFO")
                             else:
-                                set_p(15); zip_name = os.path.basename(zip_path); self.emit_log(f"📦 [文件打包] 制作极速零压缩封包 ZIP: {zip_name} ...", "INFO")
-                                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as zipf:
+                                set_p(15); zip_name = os.path.basename(zip_path); self.emit_log(f"📦 [文件打包] 制作智能压缩 ZIP: {zip_name} ...", "INFO")
+                                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zipf:
                                     for root, _, files in os.walk(folder_path):
                                         for f in files:
                                             if not self.is_running: raise InterruptedError()
-                                            zipf.write(os.path.join(root, f), os.path.relpath(os.path.join(root, f), os.path.join(folder_path, '..')).replace(os.sep, '/'))  # ZIP 内统一用正斜杠，macOS/Linux 才能正确解压
+                                            full_path = os.path.join(root, f)
+                                            # 媒体用 Stored、其它用 Deflate；ZIP 内统一用正斜杠，跨平台才能正确解压
+                                            zipf.write(full_path, os.path.relpath(full_path, os.path.join(folder_path, '..')).replace(os.sep, '/'), compress_type=zip_entry_compress_type(f))
                                 target_path = zip_path; self.emit_log(f"✅ ZIP 打包完毕！", "SUCCESS")
                         set_p(35); self.emit_log(f"⚙️ [种子生成] 计算哈希...", "INFO")
                         t = torf.Torrent(path=target_path, trackers=[announce_url], private=True); t.generate()
@@ -767,10 +781,11 @@ class BatchWorkerThread(QThread):
                             src = find_existing_file(os.path.join(seeding_dir, f"{stem}.zip"))
                             if not src and os.path.isdir(folder_path):
                                 src = os.path.join(seeding_dir, f"{stem}.zip")
-                                with zipfile.ZipFile(src, 'w', zipfile.ZIP_STORED) as zipf:
+                                with zipfile.ZipFile(src, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zipf:
                                     for root, _, files in os.walk(folder_path):
                                         for f in files:
-                                            zipf.write(os.path.join(root, f), os.path.relpath(os.path.join(root, f), os.path.join(folder_path, '..')).replace(os.sep, '/'))  # ZIP 内统一用正斜杠，macOS/Linux 才能正确解压
+                                            full_path = os.path.join(root, f)
+                                            zipf.write(full_path, os.path.relpath(full_path, os.path.join(folder_path, '..')).replace(os.sep, '/'), compress_type=zip_entry_compress_type(f))
                                 self.emit_log(f"✅ 现场补做 ZIP 成功: {os.path.basename(src)}", "SUCCESS")
                         elif os.path.isdir(folder_path): src = folder_path
                         if src:
