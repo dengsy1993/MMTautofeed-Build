@@ -26,13 +26,18 @@ jobs:
 
       # 关键：macOS 用 --onedir，不要用 --onefile。
       # --onefile 在 macOS 上容易在 Dock 出现两个图标；--onedir 生成标准 .app，只有一个图标。
+      # 同时排除未使用的模块，减小 .app 体积、提高压缩率（不影响功能）。
       - name: 执行 PyInstaller 打包
         run: |
-          pyinstaller --noconfirm --onedir --windowed \
+          pyinstaller --noconfirm --clean --onedir --windowed \
             --icon="app_icon.icns" \
             --osx-bundle-identifier "com.mmt.autofeed" \
             --hidden-import=torf --hidden-import=qbittorrentapi \
             --add-data "app_icon.icns:." \
+            --exclude-module tkinter --exclude-module unittest --exclude-module pydoc \
+            --exclude-module PyQt6.QtQml --exclude-module PyQt6.QtQuick \
+            --exclude-module PyQt6.QtWebEngineCore --exclude-module PyQt6.QtMultimedia \
+            --exclude-module PyQt6.QtSql --exclude-module PyQt6.QtTest \
             --name "MMTautofeed" MMTautofeed.py
 
       # 不要再注入 LSUIElement=true（那会把 App 变成后台代理，图标反而异常）。
@@ -44,10 +49,11 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :NSHighResolutionCapable true" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :NSHighResolutionCapable bool true" "$PLIST"
           echo "Info.plist 已修正：LSUIElement=false, NSHighResolutionCapable=true"
 
+      # -9：最高压缩比，缩小下载体积（仅打包耗时略增，不影响程序运行）
       - name: 压缩为 ZIP
         run: |
           cd dist
-          zip -r MMTautofeed_Mac.zip MMTautofeed.app
+          zip -r -9 MMTautofeed_Mac.zip MMTautofeed.app
 
       - name: 上传成品
         uses: actions/upload-artifact@v4
