@@ -8,7 +8,7 @@
   · PTUploaderBase 提供配置读写、主题切换等公共能力。
   · PTUploaderFullGUI 负责五个标签页的界面搭建与交互。
 """
-import sys, os, json, datetime, requests, zipfile, subprocess, uuid, mimetypes, re, math, unicodedata
+import sys, os, json, datetime, requests, zipfile, subprocess, uuid, mimetypes, re, math, unicodedata, html
 from urllib.parse import urlparse, parse_qs, unquote
 
 if sys.platform == 'win32':
@@ -31,9 +31,9 @@ elif sys.platform == 'darwin':
             app_instance.setActivationPolicy_(0)
         except ImportError: pass
 
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QGroupBox, QLabel, QComboBox, QPushButton, QTableWidget, QTableWidgetItem, QTextEdit, QLineEdit, QCheckBox, QScrollArea, QGridLayout, QFormLayout, QSpinBox, QHeaderView, QRadioButton, QButtonGroup, QMessageBox, QFileDialog, QDialog, QSizePolicy, QProgressBar, QListWidget, QAbstractItemView, QListView, QTreeView, QFrame, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsPathItem, QGraphicsItem, QSplitter, QSystemTrayIcon, QMenu, QPlainTextEdit)
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QGroupBox, QLabel, QComboBox, QPushButton, QTableWidget, QTableWidgetItem, QTextEdit, QLineEdit, QCheckBox, QScrollArea, QGridLayout, QFormLayout, QSpinBox, QHeaderView, QRadioButton, QButtonGroup, QMessageBox, QFileDialog, QDialog, QSizePolicy, QProgressBar, QListWidget, QAbstractItemView, QListView, QTreeView, QFrame, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsPathItem, QGraphicsItem, QSplitter, QSystemTrayIcon, QMenu, QPlainTextEdit, QTextBrowser)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QEvent, QTimer, QPointF, QRectF
-from PyQt6.QtGui import QStandardItemModel, QStandardItem, QColor, QIcon, QImage, QPixmap, QPainter, QPainterPath, QPen, QBrush, QPolygonF, QTransform, QPainterPathStroker, QAction, QLinearGradient
+from PyQt6.QtGui import QStandardItemModel, QStandardItem, QColor, QIcon, QImage, QPixmap, QPainter, QPainterPath, QPen, QBrush, QPolygonF, QTransform, QPainterPathStroker, QAction, QLinearGradient, QTextCursor
 
 # =============================================================================
 # 主题配色与样式系统（UI 美化核心）
@@ -216,12 +216,13 @@ QTabBar::tab:selected { background: %(btn_primary)s; color: #ffffff; }
 /* ---------- 滚动区域 / 文本域 ---------- */
 QScrollArea { border: none; background-color: transparent; }
 #ScrollContent { background-color: transparent; }
-QTextEdit { background-color: %(field_bg)s; color: %(text)s; border: 1px solid %(input_border)s; border-radius: 10px; padding: 8px; }
-QTextEdit#LogView, QTextEdit#BatchLogView, QTextEdit#CoverLogView { background-color: %(console_bg)s; color: %(console_text)s; font-family: Consolas, "Cascadia Mono", monospace; border: 1px solid %(border)s; border-radius: 10px; padding: 10px; }
+QTextEdit, QTextBrowser { background-color: %(field_bg)s; color: %(text)s; border: 1px solid %(input_border)s; border-radius: 10px; padding: 8px; }
+QTextEdit#LogView, QTextEdit#BatchLogView, QTextEdit#CoverLogView,
+QTextBrowser#LogView, QTextBrowser#BatchLogView, QTextBrowser#CoverLogView { background-color: %(console_bg)s; color: %(console_text)s; font-family: Consolas, "Cascadia Mono", monospace; border: 1px solid %(border)s; border-radius: 10px; padding: 10px; }
 QPlainTextEdit#CssEditor { background-color: %(console_bg)s; color: %(console_text)s; font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; border: 1px solid %(border)s; border-radius: 10px; padding: 10px; }
 QLabel#BgPreview { border: 1px dashed %(border)s; border-radius: 10px; color: %(text_muted)s; background-color: %(surface2)s; }
 /* 批量页的进度日志较矮，内边距收小，保证能完整显示约 3 行 */
-QTextEdit#BatchLogView { padding: 6px 8px; }
+QTextEdit#BatchLogView, QTextBrowser#BatchLogView { padding: 6px 8px; }
 QTextEdit#PresetInfo { background-color: %(field_bg)s; color: %(text)s; border: 1px dashed %(border)s; border-radius: 8px; padding: 8px 10px; }
 QGraphicsView#CollageView { border: 1px solid %(border)s; border-radius: 10px; }
 
@@ -312,6 +313,17 @@ def zip_entry_compress_type(filename):
     """按扩展名决定 ZIP 条目的压缩方式：已压缩媒体用 Stored，其余用 Deflate。"""
     ext = os.path.splitext(str(filename))[1].lower()
     return zipfile.ZIP_STORED if ext in ZIP_STORE_EXTS else zipfile.ZIP_DEFLATED
+
+def linkify_log_line(text):
+    """把日志行转成 HTML：自动给其中的 http(s) 链接加上下划线锚点，可直接点击外跳。"""
+    esc = html.escape(str(text)).replace('\n', '<br>')
+    return re.sub(r'(https?://[^\s<]+)',
+                  r'<a href="\1" style="color:#6cb6ff; text-decoration:underline;">\1</a>', esc)
+
+def build_details_url(pt_url, torrent_id):
+    """由站点域名 + 种子 ID 拼出真正的详情页链接（避免用登录回跳地址）。"""
+    base = (pt_url or '').rstrip('/') + '/'
+    return f"{base}details.php?id={torrent_id}" if torrent_id else base
 
 def build_bbcode_img(img_url, thumb_path, logger=None):
     if img_url: return f"[img]{img_url}[/img]"
@@ -809,7 +821,8 @@ class BatchWorkerThread(QThread):
                         resp = requests.post(upload_submit_url, headers=headers, data=post_data, files=files, timeout=25, allow_redirects=True, proxies=self._proxies())
                     torrent_id = extract_torrent_id(resp.url)
                     if resp.status_code in [200, 302] and torrent_id:
-                        self.cell_update_signal.emit(row, 10, "✅ 发布成功", "#22c55e"); self.emit_log(f"🎉【发布成功】种子ID: {torrent_id} | 最终URL: {resp.url}", "SUCCESS")
+                        details_url = build_details_url(self.config['pt_url'], torrent_id)
+                        self.cell_update_signal.emit(row, 10, "✅ 发布成功", "#22c55e"); self.emit_log(f"🎉【发布成功】种子ID: {torrent_id} | 详情页: {details_url}", "SUCCESS")
                         success_count += 1; set_p(90 if self.mode == 'auto' else 80)
                         if self.config['add_to_qb']:
                             dl_url = f"{self.config['pt_url']}download.php?id={torrent_id}"; self.emit_log(f"📥 [种子拉取] 请求带 Passkey 的种子...", "INFO")
@@ -1245,13 +1258,24 @@ class PTUploaderBase(QMainWindow):
         except Exception:
             pass
 
+    def _append_log_html(self, widget, html_line):
+        """把一行 HTML 追加到日志控件末尾并滚到底（这样链接才可点击）。"""
+        try:
+            widget.moveCursor(QTextCursor.MoveOperation.End)
+            widget.insertHtml(html_line + '<br>')
+            sb = widget.verticalScrollBar()
+            sb.setValue(sb.maximum())
+        except Exception:
+            pass
+
     def log_msg(self, msg, level="INFO"):
         time_str = datetime.datetime.now().strftime("%H:%M:%S")
         log_line = f"{time_str} | {level} | {msg}"
-        if hasattr(self, 'log_view'): 
-            self.log_view.append(log_line); self.log_view.verticalScrollBar().setValue(self.log_view.verticalScrollBar().maximum())
-        if hasattr(self, 'batch_log'): 
-            self.batch_log.append(log_line); self.batch_log.verticalScrollBar().setValue(self.batch_log.verticalScrollBar().maximum())
+        html_line = linkify_log_line(log_line)  # 链接自动加下划线、可点击外跳
+        if hasattr(self, 'log_view'):
+            self._append_log_html(self.log_view, html_line)
+        if hasattr(self, 'batch_log'):
+            self._append_log_html(self.batch_log, html_line)
         QApplication.processEvents()
         try:
             log_file = os.path.join(self.get_data_dir(), 'logs', f"mmtauto_{datetime.datetime.now().strftime('%Y%m%d')}.log")
@@ -1769,7 +1793,7 @@ class PTUploaderFullGUI(PTUploaderBase):
         """运行日志页：一个只读控制台 + 打开日志目录 / 清空按钮。"""
         layout = QVBoxLayout(self.tab_log); layout.setContentsMargins(16, 16, 16, 16)
         group_log = QGroupBox("🖥️ 实时运行日志"); v_log = QVBoxLayout(); v_log.setSpacing(10)
-        self.log_view = QTextEdit(); self.log_view.setObjectName("LogView"); self.log_view.setReadOnly(True)
+        self.log_view = QTextBrowser(); self.log_view.setObjectName("LogView"); self.log_view.setReadOnly(True); self.log_view.setOpenExternalLinks(True)
         h_tool = QHBoxLayout(); h_tool.addWidget(QLabel("📌 记录程序详细工作状态、接口返回值和异常报错。")); h_tool.addStretch()
         btn_open_dir = QPushButton("📂 打开日志文件夹")
         btn_open_dir.clicked.connect(lambda: os.startfile(os.path.join(self.get_data_dir(), 'logs')) if sys.platform == 'win32' else subprocess.Popen(['open' if sys.platform == 'darwin' else 'xdg-open', os.path.join(self.get_data_dir(), 'logs')]))
@@ -1888,7 +1912,7 @@ class PTUploaderFullGUI(PTUploaderBase):
         # 进度条与日志标题合并到同一行，进一步压缩首屏高度
         self.batch_progress = QProgressBar(); self.batch_progress.setValue(0)
         h_log_header = QHBoxLayout(); h_log_header.addWidget(QLabel("📝 实时进度")); h_log_header.addWidget(self.batch_progress, 1)
-        self.batch_log = QTextEdit(); self.batch_log.setObjectName("BatchLogView"); self.batch_log.setMinimumHeight(56); self.batch_log.setFixedHeight(64); self.batch_log.setReadOnly(True)
+        self.batch_log = QTextBrowser(); self.batch_log.setObjectName("BatchLogView"); self.batch_log.setMinimumHeight(56); self.batch_log.setFixedHeight(64); self.batch_log.setReadOnly(True); self.batch_log.setOpenExternalLinks(True)
         btn_clr_batch_log = QPushButton("🗑 清空"); apply_role(btn_clr_batch_log, "ghost"); btn_clr_batch_log.setCursor(Qt.CursorShape.PointingHandCursor); btn_clr_batch_log.clicked.connect(self.batch_log.clear)
         h_log_header.addWidget(btn_clr_batch_log); v_bot.addLayout(h_log_header); v_bot.addWidget(self.batch_log); group_bot.setLayout(v_bot); layout.addWidget(group_bot, 0)
 
@@ -2078,7 +2102,7 @@ class PTUploaderFullGUI(PTUploaderBase):
         v_prev.addWidget(self.lbl_preview, 1)
         
         self.cover_progress = QProgressBar(); self.cover_progress.setValue(0); self.cover_progress.setFixedHeight(16); v_prev.addWidget(self.cover_progress)
-        self.cover_log = QTextEdit(); self.cover_log.setObjectName("CoverLogView"); self.cover_log.setReadOnly(True); self.cover_log.setFixedHeight(60); v_prev.addWidget(self.cover_log)
+        self.cover_log = QTextBrowser(); self.cover_log.setObjectName("CoverLogView"); self.cover_log.setReadOnly(True); self.cover_log.setOpenExternalLinks(True); self.cover_log.setFixedHeight(60); v_prev.addWidget(self.cover_log)
         
         h_actions1 = QHBoxLayout()
         btn_rand = QPushButton("🎲 随机换一批（对选中的项）")
@@ -2425,7 +2449,7 @@ class PTUploaderFullGUI(PTUploaderBase):
 
     def log_cover(self, msg, level="INFO"):
         time_str = datetime.datetime.now().strftime("%H:%M:%S")
-        self.cover_log.append(f"{time_str} | {msg}")
+        self._append_log_html(self.cover_log, linkify_log_line(f"{time_str} | {msg}"))
         self.cover_log.verticalScrollBar().setValue(self.cover_log.verticalScrollBar().maximum())
         QApplication.processEvents()
         self.log_msg(f"[封面拼图] {msg}", level)
