@@ -2804,6 +2804,12 @@ class PTUploaderFullGUI(PTUploaderBase):
                 QMessageBox.warning(self, "提示", "后台任务仍在运行，请稍候再关闭窗口。")
                 event.ignore(); return
         super().closeEvent(event)
+        # 真正退出时：隐藏托盘并结束事件循环，确保进程退出、释放 exe 占用
+        try:
+            if self.tray_icon is not None: self.tray_icon.hide()
+            QApplication.instance().quit()
+        except Exception:
+            pass
 
     def force_stop_worker(self):
         if hasattr(self, 'worker') and self.worker.isRunning(): self.worker.stop(); self.log_msg("🛑 已强行停止后台线程。", "WARNING")
@@ -2908,7 +2914,20 @@ class PTUploaderFullGUI(PTUploaderBase):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(True)
     window = PTUploaderFullGUI()
     window.init_all()
     window.show()
-    sys.exit(app.exec())
+    rc = app.exec()
+    # 退出前收尾：结束后台线程、隐藏托盘，避免 PyInstaller 单文件进程残留占用 .exe
+    try:
+        if hasattr(window, 'worker') and window.worker is not None and window.worker.isRunning():
+            window.worker.stop(); window.worker.wait(3000)
+    except Exception:
+        pass
+    try:
+        if getattr(window, 'tray_icon', None) is not None: window.tray_icon.hide()
+    except Exception:
+        pass
+    # 强制结束进程，确保 .exe 立即释放（否则单文件版可能残留进程导致无法覆盖）
+    os._exit(rc if isinstance(rc, int) else 0)
