@@ -1362,7 +1362,7 @@ class PTUploaderBase(QMainWindow):
             "proxy_addr": self.input_proxy.text().strip() if hasattr(self, 'input_proxy') else "127.0.0.1:7897",
             "qb_category": self.input_qb_category.text() if hasattr(self, 'input_qb_category') else "",
             "qb_tags": self.input_qb_tags.text() if hasattr(self, 'input_qb_tags') else "",
-            "minimize_to_tray": self.chk_tray.isChecked() if hasattr(self, 'chk_tray') else False,
+            "close_action": self._close_action() if hasattr(self, '_close_action') else "ask",
             "tray_notify": self.chk_tray_notify.isChecked() if hasattr(self, 'chk_tray_notify') else True,
             "custom_css_enabled": self.chk_custom_css.isChecked() if hasattr(self, 'chk_custom_css') else False,
             "custom_css_code": getattr(self, 'custom_css_code', ''),  # 自定义样式代码直接存进 config.json
@@ -1395,7 +1395,10 @@ class PTUploaderBase(QMainWindow):
 
                 self.chk_qb_add.setChecked(config_data.get("qb_auto_add", True)); self.cb_batch_anon.setChecked(config_data.get("anonymous", True))
                 if hasattr(self, 'chk_reuse_existing'): self.chk_reuse_existing.setChecked(config_data.get("reuse_existing", False))
-                if hasattr(self, 'chk_tray'): self.chk_tray.setChecked(config_data.get("minimize_to_tray", False))
+                ca = config_data.get("close_action")
+                if ca not in ('ask', 'tray', 'quit'):
+                    ca = 'tray' if config_data.get("minimize_to_tray") else 'ask'  # 兼容旧配置
+                if hasattr(self, 'combo_close_action'): self.combo_close_action.setCurrentIndex(('ask', 'tray', 'quit').index(ca))
                 if hasattr(self, 'chk_tray_notify'): self.chk_tray_notify.setChecked(config_data.get("tray_notify", True))
                 self.custom_css_code = config_data.get("custom_css_code", "") or ""
                 if hasattr(self, 'chk_custom_css'): self.chk_custom_css.setChecked(config_data.get("custom_css_enabled", False))
@@ -1438,7 +1441,7 @@ class PTUploaderBase(QMainWindow):
             if hasattr(self, 'input_qb_category'): self.input_qb_category.setText("")
             if hasattr(self, 'input_qb_tags'): self.input_qb_tags.setText("")
             if hasattr(self, 'sandbox_combo_mode'): self.sandbox_combo_mode.setCurrentIndex(0)
-            if hasattr(self, 'chk_tray'): self.chk_tray.setChecked(False)
+            if hasattr(self, 'combo_close_action'): self.combo_close_action.setCurrentIndex(0)
             if hasattr(self, 'chk_tray_notify'): self.chk_tray_notify.setChecked(True)
             if hasattr(self, 'chk_custom_css'): self.chk_custom_css.setChecked(False)
             self.custom_css_code = ""
@@ -2153,17 +2156,18 @@ class PTUploaderFullGUI(PTUploaderBase):
         hp.addWidget(self.chk_proxy); hp.addWidget(QLabel("代理地址:")); hp.addWidget(self.input_proxy); hp.addStretch(); fn.addRow("网络代理:", hp)
         gn.setLayout(fn); layout.addWidget(gn)
 
-        # 窗口与托盘：关闭窗口时是否收进系统托盘后台运行
+        # 窗口与托盘：点击关闭时的行为（常规软件做法：询问 / 最小化到托盘 / 直接退出）
         gt = QGroupBox("🖥️ 窗口与托盘"); ft = QFormLayout(); ft.setSpacing(14)
-        self.chk_tray = QCheckBox("关闭窗口时最小化到系统托盘（后台继续运行）")
-        self.chk_tray.setToolTip("勾选后，点右上角关闭只会收进托盘（Windows 右下角 / macOS 顶部菜单栏）；需要彻底退出请右键托盘图标选【退出程序】。")
-        self.chk_tray.toggled.connect(lambda _checked: self._sync_tray())
-        ft.addRow(self.chk_tray)
+        self.combo_close_action = QComboBox()
+        self.combo_close_action.addItems(["关闭时询问我", "最小化到系统托盘", "直接退出程序"])
+        self.combo_close_action.setToolTip("点击右上角关闭时的行为。选「询问」会弹窗让你每次选择（可勾选不再询问）。")
+        self.combo_close_action.currentIndexChanged.connect(lambda _i: self._sync_tray())
+        ft.addRow("关闭窗口时:", self.combo_close_action)
         self.chk_tray_notify = QCheckBox("最小化到托盘时弹出提示通知")
         self.chk_tray_notify.setChecked(True)
         self.chk_tray_notify.setToolTip("取消勾选后，收进托盘时不再弹系统通知，更安静。")
         ft.addRow(self.chk_tray_notify)
-        ft.addRow(self.create_hint_label("💡 勾选后关闭主窗口不会中断任务；从托盘菜单可重新显示主窗口或彻底退出。", "primary"))
+        ft.addRow(self.create_hint_label("💡 选「询问」时，关闭会弹窗选择【最小化到托盘 / 关闭软件】，并可勾选「记住我的选择」以后不再弹。", "primary"))
         gt.setLayout(ft); layout.addWidget(gt)
 
         # 自定义样式 (CSS/QSS)：把自己的样式叠加到内置主题之上，用于个性化美化
@@ -2694,7 +2698,7 @@ class PTUploaderFullGUI(PTUploaderBase):
             available = False
         if not available:
             return
-        enabled = hasattr(self, 'chk_tray') and self.chk_tray.isChecked()
+        enabled = self._tray_needed()
         if self.tray_icon is None:
             icon = self.windowIcon()
             if icon is None or icon.isNull():
@@ -2722,6 +2726,50 @@ class PTUploaderFullGUI(PTUploaderBase):
     def _restore_from_tray(self):
         self.showNormal(); self.raise_(); self.activateWindow()
 
+    def _close_action(self):
+        """读取「关闭窗口时」的设置：ask=询问 / tray=最小化到托盘 / quit=直接退出。"""
+        if hasattr(self, 'combo_close_action'):
+            i = self.combo_close_action.currentIndex()
+            if i in (0, 1, 2):
+                return ('ask', 'tray', 'quit')[i]
+        return 'ask'
+
+    def _tray_needed(self):
+        """询问或托盘模式下需要显示托盘图标。"""
+        return self._close_action() in ('ask', 'tray')
+
+    def _minimize_to_tray(self):
+        """收进系统托盘（后台继续运行）。"""
+        self.hide()
+        if self.tray_icon is not None:
+            self.tray_icon.show()
+            try:
+                if not hasattr(self, 'chk_tray_notify') or self.chk_tray_notify.isChecked():
+                    self.tray_icon.showMessage("MMTautofeed", "已最小化到托盘，后台任务继续运行。",
+                                               QSystemTrayIcon.MessageIcon.Information, 3000)
+            except Exception:
+                pass
+
+    def _confirm_close(self):
+        """常规关闭确认弹窗，返回 ('tray'|'quit', 是否记住) ；用户取消返回 None。"""
+        box = QMessageBox(self)
+        box.setWindowTitle("关闭 MMTautofeed")
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setText("要最小化到系统托盘（后台继续运行），还是关闭软件？")
+        btn_tray = box.addButton("最小化到系统托盘", QMessageBox.ButtonRole.AcceptRole)
+        btn_quit = box.addButton("关闭软件", QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+        chk = QCheckBox("记住我的选择，以后不再询问")
+        box.setCheckBox(chk)
+        box.setDefaultButton(btn_tray)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is btn_tray:
+            return ('tray', chk.isChecked())
+        if clicked is btn_quit:
+            return ('quit', chk.isChecked())
+        return None  # 取消（或直接关掉弹窗）
+
     def _quit_app(self):
         """托盘菜单的「退出程序」：真正退出并结束后台线程。"""
         self._really_quit = True
@@ -2730,18 +2778,25 @@ class PTUploaderFullGUI(PTUploaderBase):
         self.close()
 
     def closeEvent(self, event):
-        # 开启「关闭到托盘」时：隐藏窗口、保留后台任务，不退出程序
-        if (not self._really_quit and self.tray_icon is not None and self.tray_icon.isVisible()
-                and hasattr(self, 'chk_tray') and self.chk_tray.isChecked()):
-            event.ignore(); self.hide()
-            try:
-                # 仅当用户没有关闭「托盘提示通知」时才弹气泡
-                if not hasattr(self, 'chk_tray_notify') or self.chk_tray_notify.isChecked():
-                    self.tray_icon.showMessage("MMTautofeed", "已最小化到托盘，后台任务继续运行。",
-                                               QSystemTrayIcon.MessageIcon.Information, 3000)
-            except Exception:
-                pass
-            return
+        # 「托盘菜单→退出程序」直接走真正的关闭流程
+        if not self._really_quit:
+            tray_ok = self.tray_icon is not None
+            action = self._close_action()
+            if tray_ok and action == 'ask':
+                # 常规做法：弹窗让用户选择，可勾选「记住我的选择」
+                result = self._confirm_close()
+                if result is None:
+                    event.ignore(); return  # 用户取消，保持窗口
+                choice, remember = result
+                if remember and hasattr(self, 'combo_close_action'):
+                    self.combo_close_action.setCurrentIndex(1 if choice == 'tray' else 2)
+                    self.save_config(silent=True)
+                if choice == 'tray':
+                    self._minimize_to_tray(); event.ignore(); return
+                # choice == 'quit'：继续往下走真正的关闭
+            elif tray_ok and action == 'tray':
+                self._minimize_to_tray(); event.ignore(); return
+            # action == 'quit' 或无托盘：真正关闭
         if hasattr(self, 'worker') and self.worker is not None and self.worker.isRunning():
             self.worker.stop()
             if not self.worker.wait(8000):
