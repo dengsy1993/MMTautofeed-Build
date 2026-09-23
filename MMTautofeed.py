@@ -221,8 +221,9 @@ QTextEdit#LogView, QTextEdit#BatchLogView, QTextEdit#CoverLogView,
 QTextBrowser#LogView, QTextBrowser#BatchLogView, QTextBrowser#CoverLogView { background-color: %(console_bg)s; color: %(console_text)s; font-family: Consolas, "Cascadia Mono", monospace; border: 1px solid %(border)s; border-radius: 10px; padding: 10px; }
 QPlainTextEdit#CssEditor { background-color: %(console_bg)s; color: %(console_text)s; font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; border: 1px solid %(border)s; border-radius: 10px; padding: 10px; }
 QLabel#BgPreview { border: 1px dashed %(border)s; border-radius: 10px; color: %(text_muted)s; background-color: %(surface2)s; }
-/* 批量页的进度日志较矮，内边距收小，保证能完整显示约 3 行 */
-QTextEdit#BatchLogView, QTextBrowser#BatchLogView { padding: 6px 8px; }
+/* 较矮的日志框内边距收小，保证能完整显示预设行数 */
+QTextEdit#BatchLogView, QTextBrowser#BatchLogView,
+QTextEdit#CoverLogView, QTextBrowser#CoverLogView { padding: 6px 8px; }
 QTextEdit#PresetInfo { background-color: %(field_bg)s; color: %(text)s; border: 1px dashed %(border)s; border-radius: 8px; padding: 8px 10px; }
 QGraphicsView#CollageView { border: 1px solid %(border)s; border-radius: 10px; }
 
@@ -1259,10 +1260,18 @@ class PTUploaderBase(QMainWindow):
             pass
 
     def _append_log_html(self, widget, html_line):
-        """把一行 HTML 追加到日志控件末尾并滚到底（这样链接才可点击）。"""
+        """把一行 HTML 追加到日志控件末尾并滚到底。
+
+        用「空文档先插入、之后每行 insertBlock」的方式，保证**末尾不会多出一个空白行**，
+        这样小尺寸日志框才能完整显示预设行数（否则最后一行会被空行顶掉）。
+        """
         try:
-            widget.moveCursor(QTextCursor.MoveOperation.End)
-            widget.insertHtml(html_line + '<br>')
+            cur = widget.textCursor()
+            cur.movePosition(QTextCursor.MoveOperation.End)
+            if not widget.document().isEmpty():
+                cur.insertBlock()
+            cur.insertHtml(html_line)
+            widget.setTextCursor(cur)
             sb = widget.verticalScrollBar()
             sb.setValue(sb.maximum())
         except Exception:
@@ -2105,7 +2114,7 @@ class PTUploaderFullGUI(PTUploaderBase):
         v_prev.addWidget(self.lbl_preview, 1)
         
         self.cover_progress = QProgressBar(); self.cover_progress.setValue(0); self.cover_progress.setFixedHeight(16); v_prev.addWidget(self.cover_progress)
-        self.cover_log = QTextBrowser(); self.cover_log.setObjectName("CoverLogView"); self.cover_log.setReadOnly(True); self.cover_log.setOpenExternalLinks(True); self.cover_log.setFixedHeight(60); v_prev.addWidget(self.cover_log)
+        self.cover_log = QTextBrowser(); self.cover_log.setObjectName("CoverLogView"); self.cover_log.setReadOnly(True); self.cover_log.setOpenExternalLinks(True); self.cover_log.setFixedHeight(74); v_prev.addWidget(self.cover_log)
         
         h_actions1 = QHBoxLayout()
         btn_rand = QPushButton("🎲 随机换一批（对选中的项）")
