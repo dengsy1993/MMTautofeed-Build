@@ -1277,6 +1277,21 @@ class PTUploaderBase(QMainWindow):
         except Exception:
             pass
 
+    def _fit_log_lines(self, widget, lines):
+        """把日志控件高度精确设为 lines 行：去掉文档内边距并按行高计算，避免露半行/首行被遮挡。"""
+        try:
+            widget.document().setDocumentMargin(0)
+            h = widget.fontMetrics().lineSpacing() * lines + 12 + 2  # 12=QSS 上下 padding(6+6)，2=边框
+            widget.setMinimumHeight(h); widget.setMaximumHeight(h)
+        except Exception:
+            pass
+
+    def _refit_small_logs(self):
+        """给批量页/封面台的日志框精确设定为 3 行高。"""
+        for w, n in ((getattr(self, 'batch_log', None), 3), (getattr(self, 'cover_log', None), 3)):
+            if w is not None:
+                self._fit_log_lines(w, n)
+
     def log_msg(self, msg, level="INFO"):
         time_str = datetime.datetime.now().strftime("%H:%M:%S")
         log_line = f"{time_str} | {level} | {msg}"
@@ -1338,6 +1353,8 @@ class PTUploaderBase(QMainWindow):
                 self.lbl_preview.apply_theme_color(_c)  # 封面画布底色跟随主题
         except Exception:
             pass
+        if hasattr(self, '_refit_small_logs'):
+            self._refit_small_logs()  # 按当前字体精确设定小日志框行高
 
         # 自定义规则行（RuleWidget）会记录自身主题，便于局部重绘
         if hasattr(self, 'layout_rules'):
@@ -1596,6 +1613,8 @@ class PTUploaderFullGUI(PTUploaderBase):
         self.load_config()
         self.ensure_data_dirs()
         self.log_msg(f"✅ GUI 界面渲染完成，大一统核心引擎已全面就绪！", "SUCCESS")
+        if hasattr(self, '_refit_small_logs'):
+            QTimer.singleShot(0, self._refit_small_logs)  # 字体最终生效后再校准一次小日志行高
 
     def _build_header(self):
         """顶部品牌栏：左侧工具名 + 一句话简介，右侧版本徽标。"""
@@ -1805,7 +1824,7 @@ class PTUploaderFullGUI(PTUploaderBase):
         """运行日志页：一个只读控制台 + 打开日志目录 / 清空按钮。"""
         layout = QVBoxLayout(self.tab_log); layout.setContentsMargins(16, 16, 16, 16)
         group_log = QGroupBox("🖥️ 实时运行日志"); v_log = QVBoxLayout(); v_log.setSpacing(10)
-        self.log_view = QTextBrowser(); self.log_view.setObjectName("LogView"); self.log_view.setReadOnly(True); self.log_view.setOpenExternalLinks(True)
+        self.log_view = QTextBrowser(); self.log_view.setObjectName("LogView"); self.log_view.setReadOnly(True); self.log_view.setOpenExternalLinks(True); self.log_view.document().setDocumentMargin(0)
         h_tool = QHBoxLayout(); h_tool.addWidget(QLabel("📌 记录程序详细工作状态、接口返回值和异常报错。")); h_tool.addStretch()
         btn_open_dir = QPushButton("📂 打开日志文件夹")
         btn_open_dir.clicked.connect(lambda: os.startfile(os.path.join(self.get_data_dir(), 'logs')) if sys.platform == 'win32' else subprocess.Popen(['open' if sys.platform == 'darwin' else 'xdg-open', os.path.join(self.get_data_dir(), 'logs')]))
@@ -1924,7 +1943,7 @@ class PTUploaderFullGUI(PTUploaderBase):
         # 进度条与日志标题合并到同一行，进一步压缩首屏高度
         self.batch_progress = QProgressBar(); self.batch_progress.setValue(0)
         h_log_header = QHBoxLayout(); h_log_header.addWidget(QLabel("📝 实时进度")); h_log_header.addWidget(self.batch_progress, 1)
-        self.batch_log = QTextBrowser(); self.batch_log.setObjectName("BatchLogView"); self.batch_log.setMinimumHeight(56); self.batch_log.setFixedHeight(64); self.batch_log.setReadOnly(True); self.batch_log.setOpenExternalLinks(True)
+        self.batch_log = QTextBrowser(); self.batch_log.setObjectName("BatchLogView"); self.batch_log.setMinimumHeight(56); self.batch_log.setFixedHeight(64); self.batch_log.setReadOnly(True); self.batch_log.setOpenExternalLinks(True); self.batch_log.document().setDocumentMargin(0)
         btn_clr_batch_log = QPushButton("🗑 清空"); apply_role(btn_clr_batch_log, "ghost"); btn_clr_batch_log.setCursor(Qt.CursorShape.PointingHandCursor); btn_clr_batch_log.clicked.connect(self.batch_log.clear)
         h_log_header.addWidget(btn_clr_batch_log); v_bot.addLayout(h_log_header); v_bot.addWidget(self.batch_log); group_bot.setLayout(v_bot); layout.addWidget(group_bot, 0)
 
@@ -2114,7 +2133,7 @@ class PTUploaderFullGUI(PTUploaderBase):
         v_prev.addWidget(self.lbl_preview, 1)
         
         self.cover_progress = QProgressBar(); self.cover_progress.setValue(0); self.cover_progress.setFixedHeight(16); v_prev.addWidget(self.cover_progress)
-        self.cover_log = QTextBrowser(); self.cover_log.setObjectName("CoverLogView"); self.cover_log.setReadOnly(True); self.cover_log.setOpenExternalLinks(True); self.cover_log.setFixedHeight(74); v_prev.addWidget(self.cover_log)
+        self.cover_log = QTextBrowser(); self.cover_log.setObjectName("CoverLogView"); self.cover_log.setReadOnly(True); self.cover_log.setOpenExternalLinks(True); self.cover_log.setFixedHeight(74); self.cover_log.document().setDocumentMargin(0); v_prev.addWidget(self.cover_log)
         
         h_actions1 = QHBoxLayout()
         btn_rand = QPushButton("🎲 随机换一批（对选中的项）")
