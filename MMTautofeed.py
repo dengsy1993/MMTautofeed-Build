@@ -814,12 +814,25 @@ class BatchWorkerThread(QThread):
                     except Exception: listing = []
                     self.emit_log(f"❌ 未找到种子文件: {stem}(.zip).torrent | 目录内文件: {listing}", "ERROR"); set_p(100); continue
                 self.cell_update_signal.emit(row, 10, "🚀 推送中...", "#f59e0b"); set_p(80 if self.mode == 'auto' else 60)
+                # 发种网络失败自动重试（与图床重试同款：失败等待 2 秒后再试，默认 5 次）
+                pub_retry_limit = self.config.get('publish_retry_count', 5)
+                headers = {"User-Agent": "MMTautofeed-Client/V1.00.0", "Cookie": self.config['cookie']}
+                self.emit_log(f"🌐 [网络推送] 发送表单数据...（失败自动重试 {pub_retry_limit} 次）", "INFO")
+                resp = None; last_err = None
+                for retry in range(pub_retry_limit):
+                    try:
+                        with open(torrent_path, "rb") as file_stream:
+                            files = {'file': (os.path.basename(torrent_path), file_stream, 'application/x-bittorrent')}
+                            resp = requests.post(upload_submit_url, headers=headers, data=post_data, files=files, timeout=25, allow_redirects=True, proxies=self._proxies())
+                        last_err = None; break
+                    except Exception as e:
+                        last_err = e
+                        self.emit_log(f"⚠️ 网络推送失败({e})，重试 {retry+1}/{pub_retry_limit}", "WARNING")
+                        if retry < pub_retry_limit - 1: QThread.msleep(2000)
+                if resp is None:
+                    self.cell_update_signal.emit(row, 10, "断网/超时", "#ef4444")
+                    self.emit_log(f"🚨 网络连接失败（已重试 {pub_retry_limit} 次）: {last_err}", "ERROR"); set_p(100); continue
                 try:
-                    self.emit_log(f"🌐 [网络推送] 发送表单数据...", "INFO")
-                    with open(torrent_path, "rb") as file_stream:
-                        files = {'file': (os.path.basename(torrent_path), file_stream, 'application/x-bittorrent')}
-                        headers = {"User-Agent": "MMTautofeed-Client/V1.00.0", "Cookie": self.config['cookie']}
-                        resp = requests.post(upload_submit_url, headers=headers, data=post_data, files=files, timeout=25, allow_redirects=True, proxies=self._proxies())
                     torrent_id = extract_torrent_id(resp.url)
                     if resp.status_code in [200, 302] and torrent_id:
                         details_url = build_details_url(self.config['pt_url'], torrent_id)
@@ -1377,6 +1390,7 @@ class PTUploaderBase(QMainWindow):
             "image_email": self.input_img_email.text(), "image_pwd": self.input_img_pwd.text(), "image_token": self.input_img_token.text(),
             "image_upload_api": self.input_img_upload_url.text(), "image_token_url": self.input_img_token_url.text(),
             "image_retry_count": self.spin_img_retry.value() if hasattr(self, 'spin_img_retry') else 5,
+            "publish_retry_count": self.spin_pub_retry.value() if hasattr(self, 'spin_pub_retry') else 5,
             "seed_delay": self.spin_delay.value(), "qb_url": self.input_qb_url.text(), "qb_user": self.input_qb_user.text(), "qb_pwd": self.input_qb_pwd.text(),
             "qb_auto_add": self.chk_qb_add.isChecked(), "anonymous": self.cb_batch_anon.isChecked(), "parse_mode": parse_mode,
             "clean_keywords": [self.list_kw.item(i).text() for i in range(self.list_kw.count())] if hasattr(self, 'list_kw') else [],
@@ -1413,6 +1427,7 @@ class PTUploaderBase(QMainWindow):
                 self.input_img_upload_url.setText(config_data.get("image_upload_api") or "https://img.momentpt.top/api/v1/upload")
                 self.input_img_token_url.setText(config_data.get("image_token_url") or "https://img.momentpt.top/api/v1/tokens")
                 if hasattr(self, 'spin_img_retry'): self.spin_img_retry.setValue(config_data.get("image_retry_count", 5))
+                if hasattr(self, 'spin_pub_retry'): self.spin_pub_retry.setValue(config_data.get("publish_retry_count", 5))
                 self.spin_delay.setValue(config_data.get("seed_delay", 5)); self.input_qb_url.setText(config_data.get("qb_url") or "http://127.0.0.1:8080")
                 self.input_qb_user.setText(config_data.get("qb_user") or "admin"); self.input_qb_pwd.setText(config_data.get("qb_pwd", ""))
                 
@@ -1459,6 +1474,8 @@ class PTUploaderBase(QMainWindow):
         else:
             self.apply_theme("light"); self.input_pt_url.setText("https://www.momentpt.top/"); self.input_img_upload_url.setText("https://img.momentpt.top/api/v1/upload"); self.input_img_token_url.setText("https://img.momentpt.top/api/v1/tokens")
             self.input_t_path.setText("./torrents"); self.input_s_path.setText("./seeding"); self.spin_delay.setValue(5); self.input_qb_url.setText("http://127.0.0.1:8080"); self.input_qb_user.setText("admin")
+            if hasattr(self, 'spin_pub_retry'): self.spin_pub_retry.setValue(5)
+            if hasattr(self, 'spin_img_retry'): self.spin_img_retry.setValue(5)
             self.chk_qb_add.setChecked(True); self.rb_simple.setChecked(True); self.preset_font_size = 10
             if hasattr(self, 'chk_reuse_existing'): self.chk_reuse_existing.setChecked(False)
             if hasattr(self, 'chk_proxy'): self.chk_proxy.setChecked(False)
@@ -1873,8 +1890,9 @@ class PTUploaderFullGUI(PTUploaderBase):
         b_rn = QPushButton("🔄 3.序列化重命名 (可选)"); apply_role(b_rn, "warning"); b_rn.setToolTip("把文件夹内的图片/视频重命名为 1.jpg、2.mp4…；不可逆，非必要别点。"); b_rn.clicked.connect(self.batch_rename_files)
         b_sandbox = QPushButton("🧪 4.名称解析沙盒(调试)"); apply_role(b_sandbox, "purple"); b_sandbox.setToolTip("想预览/调试标题解析规则时用，看效果、不会影响正式流程。"); b_sandbox.clicked.connect(lambda: self.tabs.setCurrentIndex(1))
         b_del = QPushButton("➖ 移除选中行"); apply_role(b_del, "danger"); b_del.setToolTip("把表格里选中的行从待发布列表移除。"); b_del.clicked.connect(self.batch_remove_row)
+        b_done = QPushButton("✅ 清除已完成发种"); apply_role(b_done, "success"); b_done.setToolTip("移除状态为「发布成功」的行，保留发布失败 / 未完成的行。"); b_done.clicked.connect(self.batch_clear_completed)
         b_clr = QPushButton("🗑 清空列表"); apply_role(b_clr, "danger"); b_clr.setToolTip("清空整个待发布列表。"); b_clr.clicked.connect(lambda: self.table.setRowCount(0))
-        h_toolbar.addWidget(b_add); h_toolbar.addWidget(b_scn); h_toolbar.addWidget(b_rn); h_toolbar.addWidget(b_sandbox); h_toolbar.addWidget(b_del); h_toolbar.addStretch(); h_toolbar.addWidget(b_clr); v_mid.addLayout(h_toolbar)
+        h_toolbar.addWidget(b_add); h_toolbar.addWidget(b_scn); h_toolbar.addWidget(b_rn); h_toolbar.addWidget(b_sandbox); h_toolbar.addWidget(b_del); h_toolbar.addStretch(); h_toolbar.addWidget(b_done); h_toolbar.addWidget(b_clr); v_mid.addLayout(h_toolbar)
 
         self.table = QTableWidget(0, 12); self.table.setMinimumHeight(72); self.table.verticalHeader().setDefaultSectionSize(34); self.table.setAlternatingRowColors(True)
         self.table.setHorizontalHeaderLabels(["原始文件夹名", "最终种子名称", "应用预设", "锁定", "物理路径", "P/V数", "年份", "分类", "附加标签", "种子", "状态", "操作"])
@@ -2177,6 +2195,7 @@ class PTUploaderFullGUI(PTUploaderBase):
         
         # 增加上传重试控制控件
         hr2 = QHBoxLayout(); hr2.addWidget(QLabel("图床上传失败时重试次数:")); self.spin_img_retry = QSpinBox(); self.spin_img_retry.setRange(1, 10); self.spin_img_retry.setValue(5); hr2.addWidget(self.spin_img_retry); hr2.addWidget(QLabel("次 (默认5次)")); hr2.addStretch(); fn.addRow("图床容错机制:", hr2)
+        hr3 = QHBoxLayout(); hr3.addWidget(QLabel("发种网络失败时重试次数:")); self.spin_pub_retry = QSpinBox(); self.spin_pub_retry.setRange(1, 15); self.spin_pub_retry.setValue(5); hr3.addWidget(self.spin_pub_retry); hr3.addWidget(QLabel("次 (默认5次，失败隔 2 秒重试)")); hr3.addStretch(); fn.addRow("发种容错机制:", hr3)
         
         hr = QHBoxLayout(); hr.addWidget(QLabel("自动发种时，两个种子间隔时间:")); self.spin_delay = QSpinBox(); self.spin_delay.setMaximum(9999); self.spin_delay.setValue(5); hr.addWidget(self.spin_delay); hr.addWidget(QLabel("秒 (默认5秒，为0时不限制)")); hr.addStretch(); fn.addRow("发种限流保护:", hr)
         hp = QHBoxLayout(); self.chk_proxy = QCheckBox("启用网络代理"); self.chk_proxy.setChecked(False); self.chk_proxy.setToolTip("使用 VPN / 代理（如 Clash、v2ray）时勾选，否则 PT 站/图床请求可能失败。默认关闭。")
@@ -2286,6 +2305,16 @@ class PTUploaderFullGUI(PTUploaderBase):
         if not sel: return QMessageBox.warning(self, "提示", "请先在下方表格中选中要移除的行。")
         for r in reversed(range(sel[0].topRow(), sel[0].bottomRow() + 1)): self.table.removeRow(r)
         self.log_msg("➖ 已从流水线移除选中的任务行", "INFO")
+
+    def batch_clear_completed(self):
+        """清除状态为「✅ 发布成功」的行，保留发布失败 / 未完成的行。"""
+        rows = [r for r in range(self.table.rowCount())
+                if self.table.item(r, 10) and "发布成功" in self.table.item(r, 10).text()]
+        if not rows:
+            return QMessageBox.information(self, "提示", "当前没有「发布成功」的行可清除。")
+        for r in reversed(rows):
+            self.table.removeRow(r)
+        self.log_msg(f"✅ 已清除 {len(rows)} 行已发布成功的任务，发布失败 / 未完成的行已保留。", "SUCCESS")
 
     def batch_rename_files(self):
         if self.table.rowCount() == 0: return QMessageBox.warning(self, "提示", "请先点击【添加文件夹】导入需要处理的内容。")
@@ -2693,7 +2722,8 @@ class PTUploaderFullGUI(PTUploaderBase):
     def build_config_for_worker(self):
         return {
             'pt_url': self.input_pt_url.text().strip() + ('/' if not self.input_pt_url.text().endswith('/') else ''), 'cookie': self.input_cookie.text().strip(), 'torrent_dir': self.get_abs_path(self.input_t_path.text()), 'seeding_dir': self.get_abs_path(self.input_s_path.text()), 'use_zip': self.cb_batch_zip.isChecked(), 'test_mode': self.cb_batch_test.isChecked(), 'anonymous': self.cb_batch_anon.isChecked(), 'category_map': {"写真": "401", "人像": "402", "风光": "403", "纪实": "404", "杂志": "405", "静物": "406", "儿童": "407", "超现实": "408", "美食": "409", "动物": "410", "人文": "411", "软件": "412", "图书": "413", "预设": "414", "教程": "415", "Special": "416"}, 'qb_url': self.input_qb_url.text().strip(), 'qb_user': self.input_qb_user.text().strip(), 'qb_pwd': self.input_qb_pwd.text().strip(), 'qb_category': self.input_qb_category.text().strip() if hasattr(self, 'input_qb_category') else "", 'qb_tags': self.input_qb_tags.text().strip() if hasattr(self, 'input_qb_tags') else "", 'add_to_qb': self.chk_qb_add.isChecked(), 'image_token': self.input_img_token.text().strip(), 'image_upload_api': self.input_img_upload_url.text().strip(), 'seed_delay': self.spin_delay.value(), 'reuse_existing': self.chk_reuse_existing.isChecked() if hasattr(self, 'chk_reuse_existing') else False, 'use_proxy': self.chk_proxy.isChecked() if hasattr(self, 'chk_proxy') else False, 'proxy_addr': self.input_proxy.text().strip() if hasattr(self, 'input_proxy') else '127.0.0.1:7897',
-            'image_retry_count': self.spin_img_retry.value() if hasattr(self, 'spin_img_retry') else 5
+            'image_retry_count': self.spin_img_retry.value() if hasattr(self, 'spin_img_retry') else 5,
+            'publish_retry_count': self.spin_pub_retry.value() if hasattr(self, 'spin_pub_retry') else 5
         }
 
     def start_worker(self, mode):
